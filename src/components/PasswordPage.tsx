@@ -1,35 +1,51 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 
 interface PasswordPageProps {
   onSuccess: () => void;
 }
 
-const CORRECT_PASSWORD = "HATIM200707";
-
 export default function PasswordPage({ onSuccess }: PasswordPageProps) {
   const [password, setPassword] = useState("");
   const [error, setError] = useState(false);
   const [shake, setShake] = useState(false);
+  const [loading, setLoading] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
-    if (password === CORRECT_PASSWORD) {
-      setError(false);
-      onSuccess();
-    } else {
+    if (loading) return;
+    setLoading(true);
+
+    try {
+      const res = await fetch("/api/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password }),
+      });
+
+      if (res.ok) {
+        setError(false);
+        onSuccess();
+      } else {
+        setError(true);
+        setShake(true);
+        setTimeout(() => setShake(false), 500);
+        setPassword("");
+      }
+    } catch {
       setError(true);
       setShake(true);
       setTimeout(() => setShake(false), 500);
-      setPassword("");
+    } finally {
+      setLoading(false);
     }
-  };
+  }, [password, loading, onSuccess]);
 
   return (
     <div className="min-h-screen flex items-center justify-center relative overflow-hidden">
@@ -106,7 +122,7 @@ export default function PasswordPage({ onSuccess }: PasswordPageProps) {
                        hover:from-[#ff8c33] hover:to-[#ff5555] transition-all duration-300
                        hover:scale-[1.02] active:scale-[0.98]"
           >
-            AUTHENTICATE
+            {loading ? "VERIFYING..." : "AUTHENTICATE"}
           </button>
         </form>
 
