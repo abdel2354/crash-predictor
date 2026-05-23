@@ -56,6 +56,13 @@ def is_admin(context: ContextTypes.DEFAULT_TYPE) -> bool:
     return session == 1
 
 
+async def require_admin(query, context: ContextTypes.DEFAULT_TYPE) -> bool:
+    if not is_logged_in(context) or not is_admin(context):
+        await query.edit_message_text(access_denied_text(), parse_mode="HTML")
+        return False
+    return True
+
+
 def admin_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [
@@ -300,6 +307,9 @@ async def manage_accounts_callback(update: Update, context: ContextTypes.DEFAULT
     query = update.callback_query
     await query.answer()
 
+    if not await require_admin(query, context):
+        return
+
     accounts = db.get_all_accounts()
     buttons = [[InlineKeyboardButton("\u2795 Add account", callback_data="add_account")]]
 
@@ -326,6 +336,9 @@ async def go_back_manage_callback(update: Update, context: ContextTypes.DEFAULT_
     query = update.callback_query
     await query.answer()
 
+    if not await require_admin(query, context):
+        return
+
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("\U0001f512 Manage accounts", callback_data="manage_accounts")],
         [InlineKeyboardButton("\U0001f50e Look at purchases", callback_data="look_purchases")],
@@ -343,6 +356,9 @@ async def go_back_manage_callback(update: Update, context: ContextTypes.DEFAULT_
 async def view_account_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
+
+    if not await require_admin(query, context):
+        return
 
     account_id = int(query.data.split("_")[-1])
     account = db.get_account_by_id(account_id)
@@ -377,6 +393,9 @@ async def reset_bal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
     query = update.callback_query
     await query.answer()
 
+    if not await require_admin(query, context):
+        return
+
     account_id = int(query.data.split("_")[-1])
     db.reset_balance(account_id)
 
@@ -406,6 +425,9 @@ async def reset_bal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE)
 async def view_purchases_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
+
+    if not await require_admin(query, context):
+        return
 
     account_id = int(query.data.split("_")[-1])
     purchases = db.get_purchases_by_account(account_id)
@@ -441,6 +463,9 @@ async def delete_acc_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     await query.answer()
 
+    if not await require_admin(query, context):
+        return
+
     account_id = int(query.data.split("_")[-1])
     account = db.get_account_by_id(account_id)
     login = account["login"] if account else "Unknown"
@@ -460,6 +485,10 @@ async def delete_acc_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def add_account_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
+
+    if not await require_admin(query, context):
+        return ConversationHandler.END
+
     await query.edit_message_text(
         "\U0001f512 <b>Type login for new account:</b>",
         parse_mode="HTML",
@@ -521,6 +550,9 @@ async def send_creds_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     await query.answer()
 
+    if not await require_admin(query, context):
+        return
+
     account_id = int(query.data.split("_")[-1])
     account = db.get_account_by_id(account_id)
     if not account:
@@ -543,6 +575,9 @@ async def send_creds_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def add_bal_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
+
+    if not await require_admin(query, context):
+        return ConversationHandler.END
 
     account_id = int(query.data.split("_")[-1])
     context.user_data["topup_account_id"] = account_id
@@ -602,6 +637,9 @@ async def topup_amount_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 async def look_purchases_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
+
+    if not await require_admin(query, context):
+        return
 
     purchases = db.get_all_purchases()
     if not purchases:
@@ -813,8 +851,14 @@ async def buy_key_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         )
         return
 
-    key_value = db.buy_key(kt_id)
-    if not key_value:
+    cat_id = context.user_data.get("current_category_id", 0)
+    cat = db.get_category_by_id(cat_id)
+    cat_name = cat["name"] if cat else "Unknown"
+
+    result = db.purchase_key_atomic(
+        kt_id, account["id"], kt["name"], cat_name, kt["price"], kt["init_price"]
+    )
+    if not result:
         await query.edit_message_text(
             "\u274c <b>No keys in stock!</b>",
             parse_mode="HTML",
@@ -824,14 +868,7 @@ async def buy_key_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         )
         return
 
-    new_balance = account["balance"] - kt["price"]
-    db.update_balance(account["id"], new_balance)
-
-    cat_id = context.user_data.get("current_category_id", 0)
-    cat = db.get_category_by_id(cat_id)
-    cat_name = cat["name"] if cat else "Unknown"
-
-    db.record_purchase(account["id"], kt["name"], cat_name, key_value, kt["price"])
+    key_value, new_balance = result
 
     await query.edit_message_text(
         f"\u2705 <b>Purchase successful!</b>\n\n"
@@ -850,6 +887,9 @@ async def clear_keys_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
     await query.answer()
 
+    if not await require_admin(query, context):
+        return
+
     kt_id = int(query.data.split("_")[-1])
     cleared = db.clear_keys(kt_id)
     kt = db.get_key_type_by_id(kt_id)
@@ -863,6 +903,9 @@ async def clear_keys_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def del_kt_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
+
+    if not await require_admin(query, context):
+        return
 
     kt_id = int(query.data.split("_")[-1])
     db.delete_key_type(kt_id)
@@ -879,6 +922,9 @@ async def del_kt_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
 async def delete_cat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
+
+    if not await require_admin(query, context):
+        return
 
     cat_id = int(query.data.split("_")[-1])
     db.delete_category(cat_id)
@@ -1204,6 +1250,9 @@ async def broadcast_start_callback(update: Update, context: ContextTypes.DEFAULT
     query = update.callback_query
     await query.answer()
 
+    if not await require_admin(query, context):
+        return ConversationHandler.END
+
     context.user_data["broadcast_items"] = []
 
     keyboard = InlineKeyboardMarkup([
@@ -1419,6 +1468,9 @@ async def broadcast_count_callback(update: Update, context: ContextTypes.DEFAULT
 async def statistics_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     await query.answer()
+
+    if not await require_admin(query, context):
+        return
 
     total = db.get_total_sales()
 

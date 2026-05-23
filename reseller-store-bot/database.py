@@ -74,6 +74,7 @@ def init_db() -> None:
             category_name TEXT NOT NULL,
             key_value TEXT NOT NULL,
             price REAL NOT NULL,
+            init_price REAL DEFAULT 0.0,
             purchased_at TEXT NOT NULL,
             FOREIGN KEY (account_id) REFERENCES accounts(id) ON DELETE CASCADE
         )
@@ -384,6 +385,50 @@ def buy_key(key_type_id: int) -> Optional[str]:
     return None
 
 
+def purchase_key_atomic(
+    key_type_id: int,
+    account_id: int,
+    key_type_name: str,
+    category_name: str,
+    price: float,
+    init_price: float = 0.0,
+) -> Optional[tuple[str, float]]:
+    conn = get_connection()
+    try:
+        row = conn.execute(
+            "SELECT * FROM keys WHERE key_type_id = ? AND sold = 0 LIMIT 1",
+            (key_type_id,),
+        ).fetchone()
+        if not row:
+            conn.close()
+            return None
+
+        conn.execute("UPDATE keys SET sold = 1 WHERE id = ?", (row["id"],))
+
+        acc = conn.execute(
+            "SELECT balance FROM accounts WHERE id = ?", (account_id,)
+        ).fetchone()
+        new_balance = acc["balance"] - price
+        conn.execute(
+            "UPDATE accounts SET balance = ? WHERE id = ?", (new_balance, account_id)
+        )
+
+        now = datetime.now(timezone.utc).strftime("%d/%m/%Y, %H:%M")
+        conn.execute(
+            "INSERT INTO purchases (account_id, key_type_name, category_name, key_value, price, init_price, purchased_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (account_id, key_type_name, category_name, row["value"], price, init_price, now),
+        )
+
+        conn.commit()
+        conn.close()
+        return (row["value"], new_balance)
+    except Exception:
+        conn.rollback()
+        conn.close()
+        raise
+
+
 def clear_keys(key_type_id: int) -> int:
     conn = get_connection()
     result = conn.execute(
@@ -403,13 +448,14 @@ def record_purchase(
     category_name: str,
     key_value: str,
     price: float,
+    init_price: float = 0.0,
 ) -> None:
     conn = get_connection()
     now = datetime.now(timezone.utc).strftime("%d/%m/%Y, %H:%M")
     conn.execute(
-        "INSERT INTO purchases (account_id, key_type_name, category_name, key_value, price, purchased_at) "
-        "VALUES (?, ?, ?, ?, ?, ?)",
-        (account_id, key_type_name, category_name, key_value, price, now),
+        "INSERT INTO purchases (account_id, key_type_name, category_name, key_value, price, init_price, purchased_at) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+        (account_id, key_type_name, category_name, key_value, price, init_price, now),
     )
     conn.commit()
     conn.close()
@@ -496,14 +542,9 @@ def get_top_buyers(limit: int = 10) -> list[dict]:
 def get_net_profit() -> float:
     conn = get_connection()
     row = conn.execute(
-        "SELECT COALESCE(SUM(p.price), 0) as revenue FROM purchases p"
+        "SELECT COALESCE(SUM(price), 0) as revenue, COALESCE(SUM(init_price), 0) as cost FROM purchases"
     ).fetchone()
-    revenue = row["revenue"] if row else 0.0
-
-    row2 = conn.execute(
-        "SELECT COALESCE(SUM(kt.init_price), 0) as cost FROM purchases p "
-        "JOIN key_types kt ON p.key_type_name = kt.name"
-    ).fetchone()
-    cost = row2["cost"] if row2 else 0.0
     conn.close()
+    revenue = row["revenue"] if row else 0.0
+    cost = row["cost"] if row else 0.0
     return revenue - cost
