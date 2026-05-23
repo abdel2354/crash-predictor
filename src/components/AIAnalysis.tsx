@@ -8,7 +8,36 @@ interface CrashEntry {
   timestamp: string;
 }
 
-export default function AIAnalysis() {
+interface CrashRound {
+  f: number;
+  l: number;
+  ts: string;
+}
+
+interface CrashStats {
+  average: number;
+  median: number;
+  highest: number;
+  lowest: number;
+  above2x: number;
+  above5x: number;
+  above10x: number;
+  totalRounds: number;
+  recentTrend: string;
+  streakInfo: string;
+}
+
+interface AIAnalysisProps {
+  liveHistory: CrashRound[];
+  liveStats: CrashStats | null;
+  isConnected: boolean;
+}
+
+export default function AIAnalysis({
+  liveHistory,
+  liveStats,
+  isConnected,
+}: AIAnalysisProps) {
   const [history, setHistory] = useState<CrashEntry[]>([]);
   const [isMonitoring, setIsMonitoring] = useState(false);
   const [stats, setStats] = useState({
@@ -42,10 +71,19 @@ export default function AIAnalysis() {
 
   const startMonitoring = () => {
     setIsMonitoring(true);
-    addLogLine("[AI] Starting real-time crash monitoring...");
-    addLogLine("[AI] Neural network engaged — watching for patterns...");
+    if (isConnected) {
+      addLogLine("[AI] Connected to live 1xBet data stream...");
+      addLogLine("[AI] Analyzing real crash patterns...");
+    } else {
+      addLogLine("[AI] Starting simulated crash monitoring...");
+      addLogLine("[AI] Connect 1xBet for real data analysis...");
+    }
 
     intervalRef.current = setInterval(() => {
+      if (isConnected && liveHistory.length > 0) {
+        return;
+      }
+
       const crashPoint = generateCrashPoint();
       const now = new Date();
       const timestamp = now.toLocaleTimeString();
@@ -61,7 +99,8 @@ export default function AIAnalysis() {
 
         const multipliers = updated.map((e) => e.multiplier);
         const sorted = [...multipliers].sort((a, b) => a - b);
-        const avg = multipliers.reduce((a, b) => a + b, 0) / multipliers.length;
+        const avg =
+          multipliers.reduce((a, b) => a + b, 0) / multipliers.length;
         const mid = Math.floor(sorted.length / 2);
         const median =
           sorted.length % 2 !== 0
@@ -82,11 +121,11 @@ export default function AIAnalysis() {
 
       if (crashPoint < 1.5) {
         addLogLine(
-          `[${timestamp}] Crash @ ${crashPoint}x — ⚠ LOW — Quick crash detected`
+          `[${timestamp}] Crash @ ${crashPoint}x — LOW — Quick crash detected`
         );
       } else if (crashPoint > 10) {
         addLogLine(
-          `[${timestamp}] Crash @ ${crashPoint}x — 🟢 HIGH — Moon round!`
+          `[${timestamp}] Crash @ ${crashPoint}x — HIGH — Moon round!`
         );
       } else {
         addLogLine(`[${timestamp}] Crash @ ${crashPoint}x — Recorded`);
@@ -106,6 +145,30 @@ export default function AIAnalysis() {
     };
   }, []);
 
+  // Log live data from 1xBet
+  const prevLiveCountRef = useRef(0);
+  useEffect(() => {
+    if (isConnected && liveHistory.length > prevLiveCountRef.current) {
+      const newEntries = liveHistory.slice(
+        0,
+        liveHistory.length - prevLiveCountRef.current
+      );
+      for (const entry of newEntries.reverse()) {
+        const ts = new Date(entry.ts).toLocaleTimeString();
+        if (entry.f < 1.5) {
+          addLogLine(
+            `[${ts}] LIVE Crash @ ${entry.f}x — LOW — Quick crash`
+          );
+        } else if (entry.f > 10) {
+          addLogLine(`[${ts}] LIVE Crash @ ${entry.f}x — HIGH — Moon!`);
+        } else {
+          addLogLine(`[${ts}] LIVE Crash @ ${entry.f}x — Recorded`);
+        }
+      }
+      prevLiveCountRef.current = liveHistory.length;
+    }
+  }, [liveHistory, isConnected]);
+
   const getMultiplierColor = (m: number) => {
     if (m < 1.5) return "text-[#ff3b3b]";
     if (m < 2) return "text-[#ffbb00]";
@@ -113,39 +176,67 @@ export default function AIAnalysis() {
     return "text-[#00ccff]";
   };
 
+  const displayStats = isConnected && liveStats ? liveStats : stats;
+  const displayHistory = isConnected
+    ? liveHistory.map((r, i) => ({
+        id: i,
+        multiplier: r.f,
+        timestamp: new Date(r.ts).toLocaleTimeString(),
+      }))
+    : history;
+
   return (
     <div className="space-y-6">
+      {/* Live data banner */}
+      {isConnected && (
+        <div className="glass rounded-xl p-4 border border-[#00ff88]/30">
+          <div className="flex items-center gap-2">
+            <div className="w-2 h-2 bg-[#00ff88] rounded-full animate-pulse" />
+            <span className="text-[#00ff88] text-sm terminal-text font-bold">
+              LIVE DATA FROM 1xBet
+            </span>
+            <span className="text-gray-500 text-xs terminal-text ml-auto">
+              {liveHistory.length} rounds captured
+            </span>
+          </div>
+        </div>
+      )}
+
       {/* Controls */}
       <div className="flex items-center gap-4">
-        <button
-          onClick={isMonitoring ? stopMonitoring : startMonitoring}
-          className={`px-6 py-3 font-bold rounded-lg transition-all duration-300 ${
-            isMonitoring
-              ? "bg-[#ff3b3b] hover:bg-[#ff5555] text-white"
-              : "bg-gradient-to-r from-[#00ff88] to-[#00ccff] text-black hover:opacity-90"
-          }`}
-        >
-          {isMonitoring ? "⏹ STOP MONITORING" : "▶ START AI MONITORING"}
-        </button>
-        {isMonitoring && (
+        {!isConnected && (
+          <button
+            onClick={isMonitoring ? stopMonitoring : startMonitoring}
+            className={`px-6 py-3 font-bold rounded-lg transition-all duration-300 ${
+              isMonitoring
+                ? "bg-[#ff3b3b] hover:bg-[#ff5555] text-white"
+                : "bg-gradient-to-r from-[#00ff88] to-[#00ccff] text-black hover:opacity-90"
+            }`}
+          >
+            {isMonitoring
+              ? "STOP MONITORING"
+              : "START SIMULATED MONITORING"}
+          </button>
+        )}
+        {(isMonitoring || isConnected) && (
           <div className="flex items-center gap-2">
             <div className="w-2 h-2 bg-[#00ff88] rounded-full animate-pulse" />
             <span className="text-[#00ff88] text-sm terminal-text">
-              LIVE — Analyzing...
+              {isConnected ? "LIVE DATA" : "SIMULATED"} — Analyzing...
             </span>
           </div>
         )}
       </div>
 
       {/* Stats Grid */}
-      {stats.totalRounds > 0 && (
+      {displayStats.totalRounds > 0 && (
         <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
           <div className="glass rounded-lg p-4 text-center">
             <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">
               Average
             </p>
             <p className="text-xl font-bold text-[#ff6b00]">
-              {stats.average}x
+              {displayStats.average}x
             </p>
           </div>
           <div className="glass rounded-lg p-4 text-center">
@@ -153,7 +244,7 @@ export default function AIAnalysis() {
               Median
             </p>
             <p className="text-xl font-bold text-[#ffbb00]">
-              {stats.median}x
+              {displayStats.median}x
             </p>
           </div>
           <div className="glass rounded-lg p-4 text-center">
@@ -161,7 +252,7 @@ export default function AIAnalysis() {
               Highest
             </p>
             <p className="text-xl font-bold text-[#00ff88]">
-              {stats.highest}x
+              {displayStats.highest}x
             </p>
           </div>
           <div className="glass rounded-lg p-4 text-center">
@@ -169,7 +260,7 @@ export default function AIAnalysis() {
               Lowest
             </p>
             <p className="text-xl font-bold text-[#ff3b3b]">
-              {stats.lowest}x
+              {displayStats.lowest === Infinity ? "—" : displayStats.lowest}x
             </p>
           </div>
           <div className="glass rounded-lg p-4 text-center">
@@ -177,8 +268,11 @@ export default function AIAnalysis() {
               Above 2x
             </p>
             <p className="text-xl font-bold text-white">
-              {stats.totalRounds > 0
-                ? ((stats.above2x / stats.totalRounds) * 100).toFixed(0)
+              {displayStats.totalRounds > 0
+                ? (
+                    (displayStats.above2x / displayStats.totalRounds) *
+                    100
+                  ).toFixed(0)
                 : 0}
               %
             </p>
@@ -187,7 +281,9 @@ export default function AIAnalysis() {
             <p className="text-xs text-gray-500 uppercase tracking-wider mb-1">
               Rounds
             </p>
-            <p className="text-xl font-bold text-white">{stats.totalRounds}</p>
+            <p className="text-xl font-bold text-white">
+              {displayStats.totalRounds}
+            </p>
           </div>
         </div>
       )}
@@ -204,11 +300,16 @@ export default function AIAnalysis() {
           <div className="p-4 h-64 overflow-y-auto bg-[#0d1117]">
             {logLines.length === 0 ? (
               <p className="text-gray-600 terminal-text text-sm">
-                Start monitoring to see AI analysis...
+                {isConnected
+                  ? "Live data streaming from 1xBet..."
+                  : "Start monitoring to see AI analysis..."}
               </p>
             ) : (
               logLines.map((line, i) => (
-                <p key={i} className="text-xs terminal-text text-gray-400 mb-0.5">
+                <p
+                  key={i}
+                  className={`text-xs terminal-text mb-0.5 ${line.includes("LIVE") ? "text-[#00ff88]" : "text-gray-400"}`}
+                >
                   {line}
                 </p>
               ))
@@ -222,7 +323,7 @@ export default function AIAnalysis() {
           <div className="bg-[#1a1f2e] px-4 py-2 flex items-center gap-2">
             <div className="w-2 h-2 rounded-full bg-[#ff6b00]" />
             <span className="text-gray-400 text-xs terminal-text">
-              Crash History
+              {isConnected ? "Live Crash History" : "Crash History"}
             </span>
           </div>
           <div className="h-64 overflow-y-auto">
@@ -238,7 +339,7 @@ export default function AIAnalysis() {
                 </tr>
               </thead>
               <tbody>
-                {history.length === 0 ? (
+                {displayHistory.length === 0 ? (
                   <tr>
                     <td
                       colSpan={2}
@@ -248,7 +349,7 @@ export default function AIAnalysis() {
                     </td>
                   </tr>
                 ) : (
-                  history.map((entry) => (
+                  displayHistory.map((entry) => (
                     <tr
                       key={entry.id}
                       className="border-t border-[#1e293b] hover:bg-[#1a1f2e] transition-colors"
