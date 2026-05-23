@@ -370,6 +370,24 @@ def get_available_keys_count(key_type_id: int) -> int:
     return row["cnt"] if row else 0
 
 
+def get_stock_summary() -> list[dict]:
+    conn = get_connection()
+    rows = conn.execute(
+        """
+        SELECT c.name AS category_name, kt.name AS key_type_name,
+               COUNT(CASE WHEN k.sold = 0 THEN 1 END) AS available
+        FROM categories c
+        JOIN positions p ON p.category_id = c.id
+        JOIN key_types kt ON kt.position_id = p.id
+        LEFT JOIN keys k ON k.key_type_id = kt.id
+        GROUP BY c.name, kt.name
+        ORDER BY c.name, kt.name
+        """
+    ).fetchall()
+    conn.close()
+    return [dict(r) for r in rows]
+
+
 def buy_key(key_type_id: int) -> Optional[str]:
     conn = get_connection()
     row = conn.execute(

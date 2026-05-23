@@ -66,9 +66,10 @@ async def require_admin(query, context: ContextTypes.DEFAULT_TYPE) -> bool:
 def admin_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [
-            ["\U0001f6cd Buy keys", "\U0001f3db Account"],
-            ["\U0001f527 Manage"],
-            ["\U0001f680 Log out"],
+            ["\U0001f6cd Buy keys"],
+            ["\U0001f3db Account", "\U0001f680 Log out"],
+            ["\U0001f527 Manage", "\U0001f4e6 Stock"],
+            ["\U0001f4ca Statistics"],
         ],
         resize_keyboard=True,
     )
@@ -77,9 +78,16 @@ def admin_keyboard() -> ReplyKeyboardMarkup:
 def user_keyboard() -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(
         [
-            ["\U0001f6cd Buy keys", "\U0001f3db Account"],
-            ["\U0001f680 Log out"],
+            ["\U0001f6cd Buy keys"],
+            ["\U0001f3db Account", "\U0001f680 Log out"],
         ],
+        resize_keyboard=True,
+    )
+
+
+def login_keyboard() -> ReplyKeyboardMarkup:
+    return ReplyKeyboardMarkup(
+        [["\U0001f512 Login"]],
         resize_keyboard=True,
     )
 
@@ -105,7 +113,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> i
         await update.message.reply_text(
             access_denied_text(),
             parse_mode="HTML",
-            reply_markup=ReplyKeyboardRemove(),
+            reply_markup=login_keyboard(),
         )
         return ConversationHandler.END
 
@@ -195,7 +203,7 @@ async def logout_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         "\U0001f513 <b>You have successfully logged out!</b>\n"
         "To log in again, use the /login command",
         parse_mode="HTML",
-        reply_markup=ReplyKeyboardRemove(),
+        reply_markup=login_keyboard(),
     )
 
 
@@ -205,6 +213,84 @@ async def reset_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     await update.message.reply_text(
         "\u2757 This feature is disabled.",
     )
+
+
+# ─────────────────── Stock ───────────────────
+
+async def stock_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not is_logged_in(context) or not is_admin(context):
+        await update.message.reply_text(access_denied_text(), parse_mode="HTML")
+        return
+
+    summary = db.get_stock_summary()
+
+    if not summary:
+        await update.message.reply_text(
+            "\U0001f4e6 <b>Stock is empty.</b>",
+            parse_mode="HTML",
+        )
+        return
+
+    text = "\U0001f4e6 <b>Stock:</b>\n\n"
+    current_cat = None
+    for item in summary:
+        if item["category_name"] != current_cat:
+            current_cat = item["category_name"]
+            text += f"\U0001f4c1 <b>{current_cat}</b>\n"
+        text += f"  \u2022 {item['key_type_name']}: <code>{item['available']}</code> pcs\n"
+
+    await update.message.reply_text(text, parse_mode="HTML")
+
+
+# ─────────────────── Statistics (keyboard) ───────────────────
+
+async def statistics_keyboard_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if not is_logged_in(context) or not is_admin(context):
+        await update.message.reply_text(access_denied_text(), parse_mode="HTML")
+        return
+
+    total = db.get_total_sales()
+
+    keyboard = InlineKeyboardMarkup([
+        [
+            InlineKeyboardButton("\U0001f4c5 Daily", callback_data="stats_daily"),
+            InlineKeyboardButton("\U0001f4c6 Week", callback_data="stats_week"),
+            InlineKeyboardButton("\U0001f5d3 Month", callback_data="stats_month"),
+        ],
+        [
+            InlineKeyboardButton("TOP", callback_data="stats_top"),
+            InlineKeyboardButton("\U0001f4b0 Net Profit", callback_data="stats_net_profit"),
+        ],
+    ])
+
+    await update.message.reply_text(
+        f"\U0001f4ca <b>All time statistics:</b>\n"
+        f"\U0001f4b0 Total sum of sells: <code>{total:.2f}$</code>",
+        parse_mode="HTML",
+        reply_markup=keyboard,
+    )
+
+
+# ─────────────────── Login (keyboard button) ───────────────────
+
+async def login_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    if is_logged_in(context):
+        await update.message.reply_text(
+            "\u2705 You are already logged in!",
+            reply_markup=get_keyboard(context),
+        )
+        return ConversationHandler.END
+
+    keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("\u274c Cancel", callback_data="cancel_login")]]
+    )
+    await update.message.reply_text(
+        "\U0001f512 <b>Enter the credentials provided by the administrator "
+        "in the following format:</b>\n<code>LOGIN\nPASSWORD</code>",
+        parse_mode="HTML",
+        reply_markup=keyboard,
+    )
+    return LOGIN_WAITING
 
 
 # ─────────────────── Account ───────────────────
@@ -1661,7 +1747,10 @@ def main() -> None:
 
     # Login conversation
     login_conv = ConversationHandler(
-        entry_points=[CommandHandler("login", login_command)],
+        entry_points=[
+            CommandHandler("login", login_command),
+            MessageHandler(filters.Regex(r"^\U0001f512 Login$"), login_button_handler),
+        ],
         states={
             LOGIN_WAITING: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, login_credentials),
@@ -1854,6 +1943,8 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.Regex(r"^\U0001f3db Account$"), account_handler))
     app.add_handler(MessageHandler(filters.Regex(r"^\U0001f527 Manage$"), manage_handler))
     app.add_handler(MessageHandler(filters.Regex(r"^\U0001f6cd Buy keys$"), buy_keys_handler))
+    app.add_handler(MessageHandler(filters.Regex(r"^\U0001f4e6 Stock$"), stock_handler))
+    app.add_handler(MessageHandler(filters.Regex(r"^\U0001f4ca Statistics$"), statistics_keyboard_handler))
 
     # Inline callback handlers
     app.add_handler(CallbackQueryHandler(manage_accounts_callback, pattern="^manage_accounts$"))
