@@ -761,17 +761,17 @@ async def buy_keys_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         return
 
     categories = db.get_all_categories()
-    buttons = []
 
+    if not categories and not is_admin(context):
+        await update.message.reply_text("\u2757 No categories available.")
+        return
+
+    buttons = []
     if is_admin(context):
         buttons.append([InlineKeyboardButton("\u2795 Add category", callback_data="add_category")])
 
     for cat in categories:
         buttons.append([InlineKeyboardButton(cat["name"], callback_data=f"cat_{cat['id']}")])
-
-    if not categories and not is_admin(context):
-        await update.message.reply_text("\u2757 No categories available.")
-        return
 
     await update.message.reply_text(
         "\U0001f4cb <b>Choose a category:</b>",
@@ -1028,9 +1028,13 @@ async def delete_cat_callback(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def add_category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
     query = update.callback_query
     await query.answer()
+    keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("\u274c Cancel", callback_data="cancel_add_category")]]
+    )
     await query.edit_message_text(
         "\U0001f4dd <b>New name for category:</b>",
         parse_mode="HTML",
+        reply_markup=keyboard,
     )
     return ADD_CATEGORY_NAME
 
@@ -1044,15 +1048,26 @@ async def add_category_name_handler(update: Update, context: ContextTypes.DEFAUL
 
     context.user_data["current_category_id"] = cat["id"]
 
+    categories = db.get_all_categories()
+    buttons = []
+    if is_admin(context):
+        buttons.append([InlineKeyboardButton("\u2795 Add category", callback_data="add_category")])
+    for c in categories:
+        buttons.append([InlineKeyboardButton(c["name"], callback_data=f"cat_{c['id']}")])
+
     await update.message.reply_text(
-        f"\u2705 Category <b>{name}</b> created!",
+        "\U0001f4cb <b>Choose a category:</b>",
         parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(buttons),
     )
-    await update.message.reply_text(
-        "\U0001f4dd <b>Type position name:</b>",
-        parse_mode="HTML",
-    )
-    return ADD_POSITION_NAME
+    return ConversationHandler.END
+
+
+async def cancel_add_category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("\U0001f4cd Canceled")
+    return ConversationHandler.END
 
 
 # ─────────────────── Add Position (Conversation) ───────────────────
@@ -1785,17 +1800,11 @@ def main() -> None:
             ADD_CATEGORY_NAME: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, add_category_name_handler),
             ],
-            ADD_POSITION_NAME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, add_position_name_handler),
-            ],
-            ADD_KEY_TYPE_NAME: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, add_key_type_name_handler),
-            ],
-            ADD_KEY_TYPE_PRICE: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, add_key_type_price_handler),
-            ],
         },
-        fallbacks=[CommandHandler("start", start_command)],
+        fallbacks=[
+            CallbackQueryHandler(cancel_add_category_callback, pattern="^cancel_add_category$"),
+            CommandHandler("start", start_command),
+        ],
         per_user=True,
         per_chat=True,
     )
