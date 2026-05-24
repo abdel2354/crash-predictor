@@ -1,4 +1,4 @@
-"""Create the first admin account in the database."""
+# M3SB IOS
 
 import sys
 
