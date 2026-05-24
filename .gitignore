@@ -39,3 +39,15 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# python
+__pycache__/
+*.pyc
+*.pyo
+status_cache.pkl
+
+# bot credentials
+ff-bot/bot.txt
+ff-bot/token.json
+ff-bot/token.txt
+ff-bot/config.json
