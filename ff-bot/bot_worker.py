@@ -223,11 +223,18 @@ class BotWorker:
             'ReleaseVersion': "OB53",
         }
 
-        login_urls = [
-            "https://loginbp.ggblueshark.com/MajorLogin",
-            "https://loginbp.common.ggbluefox.com/MajorLogin",
-            "https://loginbp.ggpolarbear.com/MajorLogin",
-        ]
+        # Region-specific MajorLogin URLs
+        region_login_urls = {
+            "ME": ["https://loginbp.common.ggbluefox.com/MajorLogin"],
+            "IND": ["https://loginbp.common.ggbluefox.com/MajorLogin"],
+            "BD": ["https://loginbp.ggpolarbear.com/MajorLogin"],
+            "PK": ["https://loginbp.ggpolarbear.com/MajorLogin"],
+            "BR": ["https://loginbp.ggpolarbear.com/MajorLogin"],
+            "TH": ["https://loginbp.ggpolarbear.com/MajorLogin"],
+            "VN": ["https://loginbp.ggpolarbear.com/MajorLogin"],
+            "ID": ["https://loginbp.ggpolarbear.com/MajorLogin"],
+        }
+        login_urls = region_login_urls.get(self.region, ["https://loginbp.common.ggbluefox.com/MajorLogin"])
 
         import ssl
         ssl_ctx = ssl.create_default_context()
@@ -266,7 +273,9 @@ class BotWorker:
             if login_res.iv:
                 self.iv = login_res.iv
             self.timestamp = login_res.timestamp
-            self.region = login_res.region or self.region
+            # Keep forced region, don't let server override
+            server_region = login_res.region
+            logger.info(f"Server returned region: {server_region}, keeping: {self.region}")
 
             if self.jwt_token:
                 logger.info(f"MajorLogin OK: UID={self.account_uid}, JWT={self.jwt_token[:20]}...")
@@ -577,21 +586,64 @@ class BotWorker:
 
                 data_hex = data.hex()
 
-                # Detect squad data
+                # 0500 packets are NOT encrypted - raw protobuf after 5-byte header
                 if data_hex.startswith("0500"):
                     try:
-                        decrypted = await DEc_PacKeT(data_hex[10:], self.key, self.iv)
-                        packet = await DeCode_PackEt(decrypted)
-                        packet_json = json.loads(packet)
+                        raw_proto = data_hex[10:]
+                        decoded = await DeCode_PackEt(raw_proto)
+                        if decoded:
+                            pj = json.loads(decoded)
+                            pkt_type = pj.get('1', {}).get('data') if isinstance(pj.get('1'), dict) else None
 
-                        # Extract squad code if available
-                        if '5' in packet_json and 'data' in packet_json['5']:
-                            sq_data = packet_json['5']['data']
-                            if '31' in sq_data:
-                                self.squad_code = sq_data['31'].get('data')
-                                logger.info(f"Squad code detected: {self.squad_code}")
-                    except:
-                        pass
+                            # Squad exit/cancel (type 6 or 7)
+                            if pkt_type in [6, 7]:
+                                self.in_squad = False
+                                self.in_match = False
+                                self.status = "online"
+                                logger.info("Squad ended (type 6/7)")
+
+                            # Squad data with field 5
+                            if '5' in pj and isinstance(pj['5'], dict):
+                                f5 = pj['5'].get('data', pj['5'])
+                                if isinstance(f5, dict):
+                                    # Squad code in field 5.31
+                                    if '31' in f5:
+                                        code = f5['31'].get('data') if isinstance(f5['31'], dict) else f5['31']
+                                        if code:
+                                            self.squad_code = str(code)
+                                            logger.info(f"Squad code: {self.squad_code}")
+                                    # Chat code in field 5.14
+                                    if '14' in f5:
+                                        cc = f5['14'].get('data') if isinstance(f5['14'], dict) else f5['14']
+                                        if cc:
+                                            self._chat_code = str(cc)
+                                    # Invite code in field 5.8
+                                    if '8' in f5:
+                                        ic = f5['8'].get('data') if isinstance(f5['8'], dict) else f5['8']
+                                        if ic:
+                                            self._invite_code = str(ic)
+                                            logger.info(f"Invite code: {self._invite_code}")
+                    except Exception as e:
+                        logger.debug(f"0500 parse: {e}")
+
+                # 0514/0515/0519 packets may be encrypted
+                elif data_hex.startswith(("0514", "0515", "0519")):
+                    try:
+                        encrypted_part = data_hex[10:]
+                        if len(encrypted_part) >= 32:
+                            decrypted = await DEc_PacKeT(encrypted_part, self.key, self.iv)
+                            decoded = await DeCode_PackEt(decrypted)
+                            if decoded:
+                                pj = json.loads(decoded)
+                                if '5' in pj and isinstance(pj['5'], dict):
+                                    f5 = pj['5'].get('data', pj['5'])
+                                    if isinstance(f5, dict) and '31' in f5:
+                                        code = f5['31'].get('data') if isinstance(f5['31'], dict) else f5['31']
+                                        if code:
+                                            self.squad_code = str(code)
+                                            logger.info(f"Squad code (encrypted): {self.squad_code}")
+                    except Exception as e:
+                        logger.debug(f"Encrypted packet parse: {e}")
 
             except asyncio.CancelledError:
                 break
