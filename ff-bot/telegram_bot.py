@@ -10,6 +10,7 @@ Usage:
 import os
 import json
 import asyncio
+import threading
 import aiohttp
 import requests
 import logging
@@ -19,6 +20,17 @@ from telegram.ext import (
     Application, CommandHandler, CallbackQueryHandler,
     MessageHandler, filters, ContextTypes, ConversationHandler
 )
+
+try:
+    from bbcXgen import (
+        create_account, REGION_LANG, ACCOUNTS_FOLDER, RARE_ACCOUNTS_FOLDER,
+        COUPLES_ACCOUNTS_FOLDER, TOKENS_FOLDER, GHOST_ACCOUNTS_FOLDER,
+        check_rarity, save_normal_account, save_jwt_token, save_rare_account,
+        BASE_FOLDER
+    )
+    GUEST_GEN_AVAILABLE = True
+except ImportError:
+    GUEST_GEN_AVAILABLE = False
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -118,6 +130,47 @@ async def api_guild_leave(guild_id, guest_uid, guest_pw):
     except Exception as e:
         return False, str(e)
 
+def load_generated_accounts(region=None):
+    accounts = []
+    if not GUEST_GEN_AVAILABLE:
+        return accounts
+    folders = [ACCOUNTS_FOLDER, GHOST_ACCOUNTS_FOLDER]
+    for folder in folders:
+        if not os.path.exists(folder):
+            continue
+        for fname in os.listdir(folder):
+            if not fname.endswith('.json'):
+                continue
+            if region and region.lower() not in fname.lower() and "ghost" not in fname.lower():
+                continue
+            try:
+                with open(os.path.join(folder, fname), 'r') as f:
+                    data = json.load(f)
+                    accounts.extend(data)
+            except:
+                pass
+    return accounts
+
+def send_likes_with_account(target_uid, account_uid, account_pw):
+    try:
+        url = f"https://tokens-asfufvfshnfkhvbb.francecentral-01.azurewebsites.net/ReQuesT?id={target_uid}&type=likes"
+        resp = requests.get(url, timeout=15)
+        if resp.status_code == 200:
+            return True, resp.text
+        return False, f"HTTP {resp.status_code}"
+    except Exception as e:
+        return False, str(e)
+
+def send_visit_with_account(target_uid, account_uid, account_pw):
+    try:
+        url = f"https://tokens-asfufvfshnfkhvbb.francecentral-01.azurewebsites.net/ReQuesT?id={target_uid}&type=spam"
+        resp = requests.get(url, timeout=15)
+        if resp.status_code == 200:
+            return True, resp.text
+        return False, f"HTTP {resp.status_code}"
+    except Exception as e:
+        return False, str(e)
+
 def get_player_likes(uid):
     try:
         text = requests.get(
@@ -180,10 +233,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             InlineKeyboardButton("❤️ Likes", callback_data="menu_likes"),
         ],
         [
-            InlineKeyboardButton("🔍 Check UID", callback_data="menu_check"),
-            InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings"),
+            InlineKeyboardButton("🔥 Mass Likes", callback_data="menu_masslikes"),
+            InlineKeyboardButton("👁 Visitors", callback_data="menu_visitors"),
         ],
         [
+            InlineKeyboardButton("🔍 Check UID", callback_data="menu_check"),
+            InlineKeyboardButton("🎮 Guest Gen", callback_data="menu_guestgen"),
+        ],
+        [
+            InlineKeyboardButton("⚙️ Settings", callback_data="menu_settings"),
             InlineKeyboardButton("❓ Help", callback_data="menu_help"),
         ],
     ]
@@ -319,6 +377,147 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode="Markdown"
         )
 
+    # --- Mass Likes ---
+    elif data == "menu_masslikes":
+        keyboard = [
+            [InlineKeyboardButton("🔥 Send Mass Likes", callback_data="masslikes_start")],
+            [InlineKeyboardButton("🔥 Auto Gen + Likes", callback_data="masslikes_autogen")],
+            [InlineKeyboardButton("🔙 Back", callback_data="menu_main")],
+        ]
+        accounts = load_generated_accounts()
+        await query.edit_message_text(
+            "🔥 *Mass Likes System*\n━━━━━━━━━━━━━━━━\n"
+            f"📦 Available guest accounts: {len(accounts)}\n\n"
+            "Send mass likes to any player using\n"
+            "guest accounts or auto-generate new ones!",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+
+    elif data == "masslikes_start":
+        context.user_data["action"] = "masslikes_uid"
+        await query.edit_message_text(
+            "🔥 *Mass Likes*\n━━━━━━━━━━━━━━━━\n"
+            "Send the *target UID* to send likes to:",
+            parse_mode="Markdown"
+        )
+
+    elif data == "masslikes_autogen":
+        context.user_data["action"] = "masslikes_autogen_uid"
+        await query.edit_message_text(
+            "🔥 *Auto Gen + Mass Likes*\n━━━━━━━━━━━━━━━━\n"
+            "This will generate guest accounts and\n"
+            "use them to send likes automatically.\n\n"
+            "Send the *target UID*:",
+            parse_mode="Markdown"
+        )
+
+    # --- Visitors ---
+    elif data == "menu_visitors":
+        keyboard = [
+            [InlineKeyboardButton("👁 Send Visitors", callback_data="visitors_start")],
+            [InlineKeyboardButton("👁 Auto Gen + Visit", callback_data="visitors_autogen")],
+            [InlineKeyboardButton("🔙 Back", callback_data="menu_main")],
+        ]
+        accounts = load_generated_accounts()
+        await query.edit_message_text(
+            "👁 *Profile Visitors System*\n━━━━━━━━━━━━━━━━\n"
+            f"📦 Available guest accounts: {len(accounts)}\n\n"
+            "Send profile visits to any player\n"
+            "using guest accounts!",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+
+    elif data == "visitors_start":
+        context.user_data["action"] = "visitors_uid"
+        await query.edit_message_text(
+            "👁 *Send Visitors*\n━━━━━━━━━━━━━━━━\n"
+            "Send the *target UID* to visit:",
+            parse_mode="Markdown"
+        )
+
+    elif data == "visitors_autogen":
+        context.user_data["action"] = "visitors_autogen_uid"
+        await query.edit_message_text(
+            "👁 *Auto Gen + Visit*\n━━━━━━━━━━━━━━━━\n"
+            "This will generate guest accounts and\n"
+            "use them to visit the profile automatically.\n\n"
+            "Send the *target UID*:",
+            parse_mode="Markdown"
+        )
+
+    # --- Guest Gen ---
+    elif data == "menu_guestgen":
+        if not GUEST_GEN_AVAILABLE:
+            keyboard = [[InlineKeyboardButton("🔙 Back", callback_data="menu_main")]]
+            await query.edit_message_text(
+                "❌ Guest Gen module not available!\nMake sure bbcXgen.py is in the bot directory.",
+                reply_markup=InlineKeyboardMarkup(keyboard)
+            )
+            return
+        regions = [r for r in REGION_LANG.keys() if r != "BR"]
+        keyboard = []
+        row = []
+        for region in regions:
+            row.append(InlineKeyboardButton(f"🌍 {region}", callback_data=f"gen_region_{region}"))
+            if len(row) == 3:
+                keyboard.append(row)
+                row = []
+        if row:
+            keyboard.append(row)
+        keyboard.append([InlineKeyboardButton("👻 GHOST Mode", callback_data="gen_region_GHOST")])
+        keyboard.append([InlineKeyboardButton("📂 View Accounts", callback_data="gen_view")])
+        keyboard.append([InlineKeyboardButton("🔙 Back", callback_data="menu_main")])
+        await query.edit_message_text(
+            "🎮 *Guest Account Generator*\n━━━━━━━━━━━━━━━━\nSelect region:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode="Markdown"
+        )
+
+    elif data.startswith("gen_region_"):
+        region = data.replace("gen_region_", "")
+        context.user_data["gen_region"] = region
+        context.user_data["action"] = "gen_count"
+        is_ghost = region == "GHOST"
+        mode_text = "👻 GHOST Mode" if is_ghost else f"🌍 Region: {region}"
+        await query.edit_message_text(
+            f"🎮 *Guest Gen — {mode_text}*\n━━━━━━━━━━━━━━━━\n"
+            f"How many accounts? Send a number (1-50):",
+            parse_mode="Markdown"
+        )
+
+    elif data == "gen_view":
+        msg = "📂 *Generated Accounts*\n━━━━━━━━━━━━━━━━\n"
+        total = 0
+        for folder_name, folder_path in [("Normal", ACCOUNTS_FOLDER), ("Rare", RARE_ACCOUNTS_FOLDER), ("Couples", COUPLES_ACCOUNTS_FOLDER)]:
+            if os.path.exists(folder_path):
+                files = [f for f in os.listdir(folder_path) if f.endswith('.json')]
+                for fname in files:
+                    try:
+                        with open(os.path.join(folder_path, fname), 'r') as file:
+                            data_list = json.load(file)
+                            count = len(data_list)
+                            total += count
+                            msg += f"📄 {folder_name}/{fname}: {count}\n"
+                    except:
+                        pass
+        ghost_file = os.path.join(GHOST_ACCOUNTS_FOLDER, "ghost.json")
+        if os.path.exists(ghost_file):
+            try:
+                with open(ghost_file, 'r') as file:
+                    data_list = json.load(file)
+                    total += len(data_list)
+                    msg += f"👻 Ghost: {len(data_list)}\n"
+            except:
+                pass
+        msg += f"\n📊 Total: {total} accounts"
+        keyboard = [
+            [InlineKeyboardButton("🔙 Guest Gen", callback_data="menu_guestgen")],
+            [InlineKeyboardButton("🔙 Main Menu", callback_data="menu_main")]
+        ]
+        await query.edit_message_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
+
     # --- Help ---
     elif data == "menu_help":
         keyboard = [
@@ -351,6 +550,7 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "`/guildleave <id> <uid> <pw>` — Leave guild\n"
             "`/like <uid>` — Send likes\n"
             "`/check <uid>` — Check UID status\n"
+            "`/gen <region> <count> <name> <pass>` — Generate guest accounts\n"
         )
         await query.edit_message_text(help_text, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode="Markdown")
 
@@ -368,6 +568,335 @@ async def handle_text_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Use /start to open the menu.",
             reply_markup=back_keyboard
         )
+        return
+
+    # --- Mass Likes Flow ---
+    if action == "masslikes_uid":
+        if not text.isdigit():
+            await update.message.reply_text("❌ UID must be a number!", reply_markup=back_keyboard)
+            return
+        context.user_data["action"] = "masslikes_count"
+        context.user_data["masslikes_target"] = text
+        await update.message.reply_text(
+            f"✅ Target: `{text}`\n\nHow many times to send likes? (1-20):",
+            parse_mode="Markdown"
+        )
+        return
+
+    if action == "masslikes_count":
+        try:
+            count = int(text)
+            if count < 1 or count > 20:
+                await update.message.reply_text("❌ Enter 1-20.", reply_markup=back_keyboard)
+                return
+        except ValueError:
+            await update.message.reply_text("❌ Invalid number!", reply_markup=back_keyboard)
+            return
+        target_uid = context.user_data.get("masslikes_target")
+        context.user_data["action"] = None
+        status_msg = await update.message.reply_text(
+            f"🔥 *Sending Mass Likes*\n━━━━━━━━━━━━━━━━\n"
+            f"Target: `{target_uid}`\nRounds: {count}\n\n⏳ Working...",
+            parse_mode="Markdown"
+        )
+        success_count = 0
+        for i in range(count):
+            ok, result = send_likes_with_account(target_uid, None, None)
+            if ok:
+                success_count += 1
+            try:
+                await status_msg.edit_text(
+                    f"🔥 Sending likes... {i+1}/{count}\n✅ Success: {success_count}"
+                )
+            except:
+                pass
+            await asyncio.sleep(1)
+        await status_msg.edit_text(
+            f"🔥 *Mass Likes Complete!*\n━━━━━━━━━━━━━━━━\n"
+            f"Target: `{target_uid}`\n"
+            f"✅ Success: {success_count}/{count}",
+            reply_markup=back_keyboard,
+            parse_mode="Markdown"
+        )
+        return
+
+    if action == "masslikes_autogen_uid":
+        if not text.isdigit():
+            await update.message.reply_text("❌ UID must be a number!", reply_markup=back_keyboard)
+            return
+        context.user_data["action"] = "masslikes_autogen_count"
+        context.user_data["masslikes_target"] = text
+        await update.message.reply_text(
+            f"✅ Target: `{text}`\n\nHow many accounts to generate & use? (1-10):",
+            parse_mode="Markdown"
+        )
+        return
+
+    if action == "masslikes_autogen_count":
+        if not GUEST_GEN_AVAILABLE:
+            await update.message.reply_text("❌ Guest Gen module not available!", reply_markup=back_keyboard)
+            context.user_data["action"] = None
+            return
+        try:
+            count = int(text)
+            if count < 1 or count > 10:
+                await update.message.reply_text("❌ Enter 1-10.", reply_markup=back_keyboard)
+                return
+        except ValueError:
+            await update.message.reply_text("❌ Invalid number!", reply_markup=back_keyboard)
+            return
+        target_uid = context.user_data.get("masslikes_target")
+        context.user_data["action"] = None
+        status_msg = await update.message.reply_text(
+            f"🔥 *Auto Gen + Mass Likes*\n━━━━━━━━━━━━━━━━\n"
+            f"Target: `{target_uid}`\n"
+            f"⏳ Generating {count} accounts...",
+            parse_mode="Markdown"
+        )
+        generated = []
+        def gen_and_like():
+            for i in range(count):
+                acc = create_account("ME", "LikeBot", "like", False)
+                if acc:
+                    generated.append(acc)
+        thread = threading.Thread(target=gen_and_like)
+        thread.start()
+        while thread.is_alive():
+            await asyncio.sleep(3)
+            try:
+                await status_msg.edit_text(
+                    f"⏳ Generated: {len(generated)}/{count} accounts..."
+                )
+            except:
+                pass
+        thread.join()
+        success_count = 0
+        for acc in generated:
+            ok, _ = send_likes_with_account(target_uid, acc.get("uid"), acc.get("password"))
+            if ok:
+                success_count += 1
+            await asyncio.sleep(1)
+        await status_msg.edit_text(
+            f"🔥 *Auto Gen + Likes Complete!*\n━━━━━━━━━━━━━━━━\n"
+            f"Target: `{target_uid}`\n"
+            f"📦 Generated: {len(generated)} accounts\n"
+            f"✅ Likes sent: {success_count}/{len(generated)}",
+            reply_markup=back_keyboard,
+            parse_mode="Markdown"
+        )
+        return
+
+    # --- Visitors Flow ---
+    if action == "visitors_uid":
+        if not text.isdigit():
+            await update.message.reply_text("❌ UID must be a number!", reply_markup=back_keyboard)
+            return
+        context.user_data["action"] = "visitors_count"
+        context.user_data["visitors_target"] = text
+        await update.message.reply_text(
+            f"✅ Target: `{text}`\n\nHow many visits to send? (1-20):",
+            parse_mode="Markdown"
+        )
+        return
+
+    if action == "visitors_count":
+        try:
+            count = int(text)
+            if count < 1 or count > 20:
+                await update.message.reply_text("❌ Enter 1-20.", reply_markup=back_keyboard)
+                return
+        except ValueError:
+            await update.message.reply_text("❌ Invalid number!", reply_markup=back_keyboard)
+            return
+        target_uid = context.user_data.get("visitors_target")
+        context.user_data["action"] = None
+        status_msg = await update.message.reply_text(
+            f"👁 *Sending Visitors*\n━━━━━━━━━━━━━━━━\n"
+            f"Target: `{target_uid}`\nRounds: {count}\n\n⏳ Working...",
+            parse_mode="Markdown"
+        )
+        success_count = 0
+        for i in range(count):
+            ok, result = send_visit_with_account(target_uid, None, None)
+            if ok:
+                success_count += 1
+            try:
+                await status_msg.edit_text(
+                    f"👁 Sending visits... {i+1}/{count}\n✅ Success: {success_count}"
+                )
+            except:
+                pass
+            await asyncio.sleep(1)
+        await status_msg.edit_text(
+            f"👁 *Visitors Complete!*\n━━━━━━━━━━━━━━━━\n"
+            f"Target: `{target_uid}`\n"
+            f"✅ Success: {success_count}/{count}",
+            reply_markup=back_keyboard,
+            parse_mode="Markdown"
+        )
+        return
+
+    if action == "visitors_autogen_uid":
+        if not text.isdigit():
+            await update.message.reply_text("❌ UID must be a number!", reply_markup=back_keyboard)
+            return
+        context.user_data["action"] = "visitors_autogen_count"
+        context.user_data["visitors_target"] = text
+        await update.message.reply_text(
+            f"✅ Target: `{text}`\n\nHow many accounts to generate & use? (1-10):",
+            parse_mode="Markdown"
+        )
+        return
+
+    if action == "visitors_autogen_count":
+        if not GUEST_GEN_AVAILABLE:
+            await update.message.reply_text("❌ Guest Gen module not available!", reply_markup=back_keyboard)
+            context.user_data["action"] = None
+            return
+        try:
+            count = int(text)
+            if count < 1 or count > 10:
+                await update.message.reply_text("❌ Enter 1-10.", reply_markup=back_keyboard)
+                return
+        except ValueError:
+            await update.message.reply_text("❌ Invalid number!", reply_markup=back_keyboard)
+            return
+        target_uid = context.user_data.get("visitors_target")
+        context.user_data["action"] = None
+        status_msg = await update.message.reply_text(
+            f"👁 *Auto Gen + Visitors*\n━━━━━━━━━━━━━━━━\n"
+            f"Target: `{target_uid}`\n"
+            f"⏳ Generating {count} accounts...",
+            parse_mode="Markdown"
+        )
+        generated = []
+        def gen_and_visit():
+            for i in range(count):
+                acc = create_account("ME", "Visitor", "visit", False)
+                if acc:
+                    generated.append(acc)
+        thread = threading.Thread(target=gen_and_visit)
+        thread.start()
+        while thread.is_alive():
+            await asyncio.sleep(3)
+            try:
+                await status_msg.edit_text(
+                    f"⏳ Generated: {len(generated)}/{count} accounts..."
+                )
+            except:
+                pass
+        thread.join()
+        success_count = 0
+        for acc in generated:
+            ok, _ = send_visit_with_account(target_uid, acc.get("uid"), acc.get("password"))
+            if ok:
+                success_count += 1
+            await asyncio.sleep(1)
+        await status_msg.edit_text(
+            f"👁 *Auto Gen + Visitors Complete!*\n━━━━━━━━━━━━━━━━\n"
+            f"Target: `{target_uid}`\n"
+            f"📦 Generated: {len(generated)} accounts\n"
+            f"✅ Visits sent: {success_count}/{len(generated)}",
+            reply_markup=back_keyboard,
+            parse_mode="Markdown"
+        )
+        return
+
+    # --- Guest Gen Flow ---
+    if action == "gen_count":
+        try:
+            count = int(text)
+            if count < 1 or count > 50:
+                await update.message.reply_text("\u274c Enter a number between 1-50.", reply_markup=back_keyboard)
+                return
+            context.user_data["gen_count"] = count
+            context.user_data["action"] = "gen_name"
+            await update.message.reply_text(
+                f"\u2705 Count: {count}\n\nNow send the *account name prefix*:\n(e.g. `Player`, `Bot`)",
+                parse_mode="Markdown"
+            )
+        except ValueError:
+            await update.message.reply_text("\u274c Invalid number! Send a number (1-50).")
+        return
+
+    if action == "gen_name":
+        if not text:
+            await update.message.reply_text("\u274c Name cannot be empty!")
+            return
+        context.user_data["gen_name"] = text
+        context.user_data["action"] = "gen_pass"
+        await update.message.reply_text(
+            f"\u2705 Name prefix: {text}\n\nNow send the *password prefix*:\n(e.g. `mypass`, `bot123`)",
+            parse_mode="Markdown"
+        )
+        return
+
+    if action == "gen_pass":
+        if not text:
+            await update.message.reply_text("\u274c Password prefix cannot be empty!")
+            return
+        region = context.user_data.get("gen_region", "ME")
+        count = context.user_data.get("gen_count", 1)
+        name = context.user_data.get("gen_name", "Player")
+        pass_prefix = text
+        is_ghost = region == "GHOST"
+        actual_region = "BR" if is_ghost else region
+        mode_text = "\ud83d\udc7b GHOST" if is_ghost else f"\ud83c\udf0d {region}"
+
+        context.user_data["action"] = None
+        status_msg = await update.message.reply_text(
+            f"\ud83d\ude80 *Starting Guest Gen*\n"
+            f"\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n"
+            f"Region: {mode_text}\n"
+            f"Count: {count}\n"
+            f"Name: {name}\n"
+            f"Password: {pass_prefix}\n\n"
+            f"\u23f3 Generating... 0/{count}",
+            parse_mode="Markdown"
+        )
+
+        loop = asyncio.get_event_loop()
+        results = []
+
+        def gen_worker():
+            for i in range(count):
+                result = create_account(actual_region, name, pass_prefix, is_ghost)
+                if result:
+                    results.append(result)
+
+        thread = threading.Thread(target=gen_worker)
+        thread.start()
+
+        last_count = 0
+        while thread.is_alive():
+            await asyncio.sleep(3)
+            if len(results) != last_count:
+                last_count = len(results)
+                try:
+                    await status_msg.edit_text(
+                        f"\u23f3 Generating... {last_count}/{count}\n"
+                        f"Region: {mode_text}"
+                    )
+                except:
+                    pass
+        thread.join()
+
+        if results:
+            msg = f"\u2705 *Generation Complete!*\n\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\u2501\n\ud83d\udcca Generated: {len(results)}/{count}\n\n"
+            for acc in results[:10]:
+                msg += (
+                    f"\ud83d\udc64 `{acc.get('name', 'N/A')}`\n"
+                    f"  UID: `{acc.get('uid', 'N/A')}`\n"
+                    f"  ID: `{acc.get('account_id', 'N/A')}`\n"
+                    f"  PW: `{acc.get('password', 'N/A')}`\n\n"
+                )
+            if len(results) > 10:
+                msg += f"... and {len(results) - 10} more (saved to files)\n"
+            msg += f"\n\ud83d\udcc1 Saved to: `{BASE_FOLDER}`"
+        else:
+            msg = f"\u274c No accounts generated. API might be down or rate-limited. Try again later."
+
+        await status_msg.edit_text(msg, reply_markup=back_keyboard, parse_mode="Markdown")
         return
 
     context.user_data["action"] = None
@@ -594,6 +1123,95 @@ async def cmd_check(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(f"🔍 UID {uid} — Not found.")
 
+async def cmd_gen(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not GUEST_GEN_AVAILABLE:
+        await update.message.reply_text("❌ Guest Gen module not available!")
+        return
+    if len(context.args) < 4:
+        await update.message.reply_text(
+            "Usage: /gen <region> <count> <name> <password_prefix>\n"
+            "Example: /gen ME 5 Player mypass\n"
+            "Regions: ME, IND, ID, VN, TH, BD, PK, TW, CIS, SAC, GHOST"
+        )
+        return
+    region = context.args[0].upper()
+    try:
+        count = int(context.args[1])
+        if count < 1 or count > 50:
+            await update.message.reply_text("❌ Count must be 1-50!")
+            return
+    except ValueError:
+        await update.message.reply_text("❌ Invalid count!")
+        return
+    name = context.args[2]
+    pass_prefix = context.args[3]
+    is_ghost = region == "GHOST"
+    actual_region = "BR" if is_ghost else region
+    mode_text = "👻 GHOST" if is_ghost else f"🌍 {region}"
+    status_msg = await update.message.reply_text(
+        f"🚀 Generating {count} accounts ({mode_text})...\n⏳ 0/{count}"
+    )
+    results = []
+    def gen_worker():
+        for i in range(count):
+            result = create_account(actual_region, name, pass_prefix, is_ghost)
+            if result:
+                results.append(result)
+    thread = threading.Thread(target=gen_worker)
+    thread.start()
+    last_count = 0
+    while thread.is_alive():
+        await asyncio.sleep(3)
+        if len(results) != last_count:
+            last_count = len(results)
+            try:
+                await status_msg.edit_text(f"⏳ Generating... {last_count}/{count} ({mode_text})")
+            except:
+                pass
+    thread.join()
+    if results:
+        msg = f"✅ Generated {len(results)}/{count} accounts:\n\n"
+        for acc in results[:10]:
+            msg += f"👤 {acc.get('name','N/A')} | UID: {acc.get('uid','N/A')} | PW: {acc.get('password','N/A')}\n"
+        if len(results) > 10:
+            msg += f"... +{len(results)-10} more\n"
+        msg += f"\n📁 Saved to: {BASE_FOLDER}"
+    else:
+        msg = "❌ No accounts generated. Try again later."
+    await status_msg.edit_text(msg)
+
+async def cmd_masslikes(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("Usage: /masslikes <uid> [count]\nExample: /masslikes 123456789 5")
+        return
+    uid = context.args[0]
+    count = int(context.args[1]) if len(context.args) > 1 else 5
+    count = max(1, min(count, 20))
+    status_msg = await update.message.reply_text(f"🔥 Sending {count} rounds of likes to {uid}...")
+    success = 0
+    for i in range(count):
+        ok, _ = send_likes_with_account(uid, None, None)
+        if ok:
+            success += 1
+        await asyncio.sleep(1)
+    await status_msg.edit_text(f"🔥 Mass Likes Done!\nTarget: {uid}\n✅ {success}/{count} rounds")
+
+async def cmd_visit(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not context.args:
+        await update.message.reply_text("Usage: /visit <uid> [count]\nExample: /visit 123456789 5")
+        return
+    uid = context.args[0]
+    count = int(context.args[1]) if len(context.args) > 1 else 5
+    count = max(1, min(count, 20))
+    status_msg = await update.message.reply_text(f"👁 Sending {count} visits to {uid}...")
+    success = 0
+    for i in range(count):
+        ok, _ = send_visit_with_account(uid, None, None)
+        if ok:
+            success += 1
+        await asyncio.sleep(1)
+    await status_msg.edit_text(f"👁 Visitors Done!\nTarget: {uid}\n✅ {success}/{count} visits")
+
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
     help_text = (
         "🎮 *Free Fire OB53 Bot Commands*\n\n"
@@ -604,6 +1222,9 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "/guildjoin <id> <uid> <pw> — Join guild\n"
         "/guildleave <id> <uid> <pw> — Leave guild\n"
         "/like <uid> — Send likes\n"
+        "/masslikes <uid> [count] — Mass likes\n"
+        "/visit <uid> [count] — Send visitors\n"
+        "/gen <region> <count> <name> <pw> — Generate accounts\n"
         "/check <uid> — Check UID status\n"
         "/help — This message\n"
     )
@@ -632,6 +1253,9 @@ def main():
     app.add_handler(CommandHandler("guildjoin", cmd_guildjoin))
     app.add_handler(CommandHandler("guildleave", cmd_guildleave))
     app.add_handler(CommandHandler("like", cmd_like))
+    app.add_handler(CommandHandler("masslikes", cmd_masslikes))
+    app.add_handler(CommandHandler("visit", cmd_visit))
+    app.add_handler(CommandHandler("gen", cmd_gen))
     app.add_handler(CommandHandler("check", cmd_check))
 
     # Text input handler (for button-triggered actions)
