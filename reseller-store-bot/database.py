@@ -277,6 +277,13 @@ def get_positions_by_category(category_id: int) -> list[dict]:
     return [dict(r) for r in rows]
 
 
+def get_position_by_id(pos_id: int) -> Optional[dict]:
+    conn = get_connection()
+    row = conn.execute("SELECT * FROM positions WHERE id = ?", (pos_id,)).fetchone()
+    conn.close()
+    return dict(row) if row else None
+
+
 def delete_position(pos_id: int) -> bool:
     conn = get_connection()
     result = conn.execute("DELETE FROM positions WHERE id = ?", (pos_id,))

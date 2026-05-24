@@ -785,32 +785,7 @@ async def category_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await query.answer()
 
     cat_id = int(query.data.split("_")[-1])
-    category = db.get_category_by_id(cat_id)
-    if not category:
-        await query.edit_message_text("\u274c Category not found.")
-        return
-
-    context.user_data["current_category_id"] = cat_id
-
-    positions = db.get_positions_by_category(cat_id)
-    buttons = []
-
-    if is_admin(context):
-        buttons.append([
-            InlineKeyboardButton("\u2795 Add position", callback_data=f"add_position_{cat_id}"),
-            InlineKeyboardButton("\U0001f5d1 Delete category", callback_data=f"delete_cat_{cat_id}"),
-        ])
-
-    for pos in positions:
-        buttons.append([InlineKeyboardButton(pos["name"], callback_data=f"pos_{pos['id']}")])
-
-    buttons.append([InlineKeyboardButton("\u2b05 Go back", callback_data="go_back_categories")])
-
-    await query.edit_message_text(
-        f"\U0001f4cb <b>Choose a product in category {category['name']}:</b>",
-        parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup(buttons),
-    )
+    await category_callback_like(query, context, cat_id)
 
 
 async def go_back_categories_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -838,36 +813,71 @@ async def position_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) 
     await query.answer()
 
     pos_id = int(query.data.split("_")[-1])
-    key_types = db.get_key_types_by_position(pos_id)
+    context.user_data["current_position_id"] = pos_id
+    await show_position_menu(query, context, pos_id)
 
-    if not key_types:
-        if is_admin(context):
-            buttons = [
-                [InlineKeyboardButton("\u2795 Add key type", callback_data=f"add_key_type_{pos_id}")],
-                [InlineKeyboardButton("\u2b05 Go back", callback_data=f"cat_{context.user_data.get('current_category_id', 0)}")],
-            ]
-            await query.edit_message_text(
-                "\u2757 No key types yet.",
-                reply_markup=InlineKeyboardMarkup(buttons),
-            )
-        else:
-            await query.edit_message_text("\u2757 No keys available.")
+
+async def show_position_menu(query, context: ContextTypes.DEFAULT_TYPE, pos_id: int) -> None:
+    pos = db.get_position_by_id(pos_id)
+    if not pos:
+        await query.edit_message_text("\u274c Position not found.")
         return
 
     context.user_data["current_position_id"] = pos_id
+    context.user_data["current_category_id"] = pos["category_id"]
 
-    kt = key_types[0]
+    key_types = db.get_key_types_by_position(pos_id)
+    buttons = []
+
+    if is_admin(context):
+        buttons.extend([
+            [
+                InlineKeyboardButton("\U0001f4c1 Add files", callback_data=f"add_files_{pos_id}"),
+                InlineKeyboardButton("\u2699 Edit status", callback_data=f"edit_status_{pos_id}"),
+            ],
+            [
+                InlineKeyboardButton("\u2795 Add key type", callback_data=f"add_key_type_{pos_id}"),
+                InlineKeyboardButton("\U0001f5d1 Delete position", callback_data=f"delete_pos_{pos_id}"),
+            ],
+            [
+                InlineKeyboardButton("\U0001f4c1 Get files", callback_data=f"get_files_{pos_id}"),
+                InlineKeyboardButton("\U0001f6e1 Check status", callback_data=f"check_status_{pos_id}"),
+            ],
+        ])
+
+    for kt in key_types:
+        buttons.append([InlineKeyboardButton(f"{kt['name']} - {kt['price']:.1f}$", callback_data=f"kt_{kt['id']}")])
+
+    buttons.append([InlineKeyboardButton("\u2b05 Go back", callback_data=f"cat_{pos['category_id']}")])
+
+    if not key_types:
+        text = f"\u274c <b>No key types for {pos['name']}!</b>"
+    else:
+        text = f"\U0001f4cb <b>Choose a key type for {pos['name']}:</b>"
+
+    await query.edit_message_text(
+        text,
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
+
+
+async def key_type_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    kt_id = int(query.data.split("_")[-1])
+    kt = db.get_key_type_by_id(kt_id)
+    if not kt:
+        await query.edit_message_text("\u274c Key type not found.")
+        return
+
     await show_key_type(query, context, kt)
 
 
 async def show_key_type(query, context: ContextTypes.DEFAULT_TYPE, kt: dict) -> None:
-    cat = db.get_category_by_id(
-        db.get_positions_by_category(
-            context.user_data.get("current_category_id", 0)
-        )[0]["category_id"]
-        if context.user_data.get("current_category_id")
-        else 0
-    )
+    pos = db.get_position_by_id(kt["position_id"])
+    cat = db.get_category_by_id(pos["category_id"]) if pos else None
     cat_name = cat["name"] if cat else "Unknown"
 
     stock = db.get_available_keys_count(kt["id"])
@@ -893,7 +903,7 @@ async def show_key_type(query, context: ContextTypes.DEFAULT_TYPE, kt: dict) -> 
         )
 
     buttons.append(
-        [InlineKeyboardButton("\u2b05 Go back", callback_data=f"cat_{context.user_data.get('current_category_id', 0)}")]
+        [InlineKeyboardButton("\u2b05 Go back", callback_data=f"pos_{kt['position_id']}")]
     )
 
     await query.edit_message_text(
@@ -1096,10 +1106,14 @@ async def add_position_name_handler(update: Update, context: ContextTypes.DEFAUL
         return ConversationHandler.END
 
     context.user_data["current_position_id"] = pos["id"]
+    keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("\u274c Cancel", callback_data="cancel_add_key_type")]]
+    )
 
     await update.message.reply_text(
         "\U0001f4dd <b>Type key type name:</b>",
         parse_mode="HTML",
+        reply_markup=keyboard,
     )
     return ADD_KEY_TYPE_NAME
 
@@ -1112,10 +1126,14 @@ async def add_key_type_callback(update: Update, context: ContextTypes.DEFAULT_TY
 
     pos_id = int(query.data.split("_")[-1])
     context.user_data["current_position_id"] = pos_id
+    keyboard = InlineKeyboardMarkup(
+        [[InlineKeyboardButton("\u274c Cancel", callback_data="cancel_add_key_type")]]
+    )
 
     await query.edit_message_text(
         "\U0001f4dd <b>Type key type name:</b>",
         parse_mode="HTML",
+        reply_markup=keyboard,
     )
     return ADD_KEY_TYPE_NAME
 
@@ -1146,17 +1164,90 @@ async def add_key_type_price_handler(update: Update, context: ContextTypes.DEFAU
         await update.message.reply_text("\u274c Failed to create key type.")
         return ConversationHandler.END
 
-    cat_id = context.user_data.get("current_category_id", 0)
+    pos = db.get_position_by_id(pos_id)
+    buttons = [
+        [
+            InlineKeyboardButton("\U0001f4c1 Add files", callback_data=f"add_files_{pos_id}"),
+            InlineKeyboardButton("\u2699 Edit status", callback_data=f"edit_status_{pos_id}"),
+        ],
+        [
+            InlineKeyboardButton("\u2795 Add key type", callback_data=f"add_key_type_{pos_id}"),
+            InlineKeyboardButton("\U0001f5d1 Delete position", callback_data=f"delete_pos_{pos_id}"),
+        ],
+        [
+            InlineKeyboardButton("\U0001f4c1 Get files", callback_data=f"get_files_{pos_id}"),
+            InlineKeyboardButton("\U0001f6e1 Check status", callback_data=f"check_status_{pos_id}"),
+        ],
+        [InlineKeyboardButton(f"{kt['name']} - {kt['price']:.1f}$", callback_data=f"kt_{kt['id']}")],
+        [InlineKeyboardButton("\u2b05 Go back", callback_data=f"cat_{pos['category_id'] if pos else 0}")],
+    ]
 
     await update.message.reply_text(
-        f"\u2705 Key type <b>{name}</b> created with price <code>{price:.1f}$</code>!",
+        f"\U0001f4cb <b>Choose a key type for {pos['name'] if pos else 'position'}:</b>",
         parse_mode="HTML",
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("\u2b05 Go back", callback_data=f"cat_{cat_id}")]
-        ]),
+        reply_markup=InlineKeyboardMarkup(buttons),
     )
     context.user_data.pop("new_key_type_name", None)
     return ConversationHandler.END
+
+
+async def cancel_add_key_type_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> int:
+    query = update.callback_query
+    await query.answer()
+    pos_id = context.user_data.get("current_position_id")
+    if pos_id:
+        await show_position_menu(query, context, pos_id)
+    else:
+        await query.edit_message_text("\U0001f4cd Canceled")
+    context.user_data.pop("new_key_type_name", None)
+    return ConversationHandler.END
+
+
+async def feature_disabled_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+    await query.edit_message_text("\u2757 This feature is disabled.")
+
+
+async def delete_position_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    await query.answer()
+
+    if not await require_admin(query, context):
+        return
+
+    pos_id = int(query.data.split("_")[-1])
+    pos = db.get_position_by_id(pos_id)
+    db.delete_position(pos_id)
+
+    cat_id = pos["category_id"] if pos else context.user_data.get("current_category_id", 0)
+    await category_callback_like(query, context, cat_id)
+
+
+async def category_callback_like(query, context: ContextTypes.DEFAULT_TYPE, cat_id: int) -> None:
+    category = db.get_category_by_id(cat_id)
+    if not category:
+        await query.edit_message_text("\u274c Category not found.")
+        return
+
+    context.user_data["current_category_id"] = cat_id
+
+    positions = db.get_positions_by_category(cat_id)
+    buttons = []
+    if is_admin(context):
+        buttons.append([
+            InlineKeyboardButton("\u2795 Add position", callback_data=f"add_position_{cat_id}"),
+            InlineKeyboardButton("\U0001f5d1 Delete category", callback_data=f"delete_cat_{cat_id}"),
+        ])
+    for pos in positions:
+        buttons.append([InlineKeyboardButton(pos["name"], callback_data=f"pos_{pos['id']}")])
+    buttons.append([InlineKeyboardButton("\u2b05 Go back", callback_data="go_back_categories")])
+
+    await query.edit_message_text(
+        f"\U0001f4cb <b>Choose a product in category {category['name']}:</b>",
+        parse_mode="HTML",
+        reply_markup=InlineKeyboardMarkup(buttons),
+    )
 
 
 # ─────────────────── Add Keys (Conversation) ───────────────────
@@ -1307,8 +1398,8 @@ async def manage_price_value_handler(update: Update, context: ContextTypes.DEFAU
 
 
 async def show_key_type_message(update: Update, context: ContextTypes.DEFAULT_TYPE, kt: dict) -> None:
-    cat_id = context.user_data.get("current_category_id", 0)
-    cat = db.get_category_by_id(cat_id)
+    pos = db.get_position_by_id(kt["position_id"])
+    cat = db.get_category_by_id(pos["category_id"]) if pos else None
     cat_name = cat["name"] if cat else "Unknown"
     stock = db.get_available_keys_count(kt["id"])
 
@@ -1331,7 +1422,7 @@ async def show_key_type_message(update: Update, context: ContextTypes.DEFAULT_TY
             [InlineKeyboardButton("\U0001f4bc Init price", callback_data=f"init_price_{kt['id']}")]
         )
     buttons.append(
-        [InlineKeyboardButton("\u2b05 Go back", callback_data=f"cat_{cat_id}")]
+        [InlineKeyboardButton("\u2b05 Go back", callback_data=f"pos_{kt['position_id']}")]
     )
 
     await update.message.reply_text(
@@ -1823,7 +1914,10 @@ def main() -> None:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, add_key_type_price_handler),
             ],
         },
-        fallbacks=[CommandHandler("start", start_command)],
+        fallbacks=[
+            CallbackQueryHandler(cancel_add_key_type_callback, pattern="^cancel_add_key_type$"),
+            CommandHandler("start", start_command),
+        ],
         per_user=True,
         per_chat=True,
     )
@@ -1839,7 +1933,10 @@ def main() -> None:
                 MessageHandler(filters.TEXT & ~filters.COMMAND, add_key_type_price_handler),
             ],
         },
-        fallbacks=[CommandHandler("start", start_command)],
+        fallbacks=[
+            CallbackQueryHandler(cancel_add_key_type_callback, pattern="^cancel_add_key_type$"),
+            CommandHandler("start", start_command),
+        ],
         per_user=True,
         per_chat=True,
     )
@@ -1973,6 +2070,9 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(category_callback, pattern=r"^cat_\d+$"))
     app.add_handler(CallbackQueryHandler(go_back_categories_callback, pattern="^go_back_categories$"))
     app.add_handler(CallbackQueryHandler(position_callback, pattern=r"^pos_\d+$"))
+    app.add_handler(CallbackQueryHandler(key_type_callback, pattern=r"^kt_\d+$"))
+    app.add_handler(CallbackQueryHandler(feature_disabled_callback, pattern=r"^(add_files|edit_status|get_files|check_status)_\d+$"))
+    app.add_handler(CallbackQueryHandler(delete_position_callback, pattern=r"^delete_pos_\d+$"))
     app.add_handler(CallbackQueryHandler(buy_key_callback, pattern=r"^buy_key_\d+$"))
     app.add_handler(CallbackQueryHandler(clear_keys_callback, pattern=r"^clear_keys_\d+$"))
     app.add_handler(CallbackQueryHandler(del_kt_callback, pattern=r"^del_kt_\d+$"))
