@@ -50,3 +50,4 @@ status_cache.pkl
 ff-bot/bot.txt
 ff-bot/token.json
 ff-bot/token.txt
+ff-bot/config.json
