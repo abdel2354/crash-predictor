@@ -21,6 +21,22 @@ def EnC_Uid_sync(H , Tp):
         e.append((H & 0x7F) | (0x80 if H > 0x7F else 0)) ; H >>= 7
     return bytes(e).hex() if Tp == 'Uid' else None
 
+def Ua_sync():
+    versions = [
+        '4.0.18P6', '4.0.19P7', '4.0.20P1', '4.1.0P3', '4.1.5P2', '4.2.1P8',
+        '4.2.3P1', '5.0.1B2', '5.0.2P4', '5.1.0P1', '5.2.0B1', '5.2.5P3',
+        '5.3.0B1', '5.3.2P2', '5.4.0P1', '5.4.3B2', '5.5.0P1', '5.5.2P3'
+    ]
+    models = [
+        'SM-A125F', 'SM-A225F', 'SM-A325M', 'SM-A515F', 'SM-A725F', 'SM-M215F', 'SM-M325FV',
+        'Redmi 9A', 'Redmi 9C', 'POCO M3', 'POCO M4 Pro', 'RMX2185', 'RMX3085',
+        'moto g(9) play', 'CPH2239', 'V2027', 'OnePlus Nord', 'ASUS_Z01QD',
+    ]
+    android_versions = ['9', '10', '11', '12', '13', '14']
+    languages = ['en-US', 'es-MX', 'pt-BR', 'id-ID', 'ru-RU', 'hi-IN']
+    countries = ['USA', 'MEX', 'BRA', 'IDN', 'RUS', 'IND']
+    return f"GarenaMSDK/{random.choice(versions)}({random.choice(models)};Android {random.choice(android_versions)};{random.choice(languages)};{random.choice(countries)};)"
+
 def DeCode_PackEt_sync(input_text):
     try:
         parsed_results = Parser().parse(input_text)
@@ -499,7 +515,7 @@ async def GeneRaTePk(Pk , N , K , V):
     elif len(_) == 3: HeadEr = N + "00000"
     elif len(_) == 4: HeadEr = N + "0000"
     elif len(_) == 5: HeadEr = N + "000"
-    else: print('ErroR => GeneRatinG ThE PacKeT !! ')
+    else: print('ErroR => GeneRatinG ThE PacKeT !! ') ; return None
     return bytes.fromhex(HeadEr + _ + PkEnc)
 async def OpEnSq(K , V,region):
     fields = {1: 1, 2: {2: "\u0001", 3: 1, 4: 1, 5: "en", 9: 1, 11: 1, 13: 1, 14: {2: 5756, 6: 11, 8: "1.111.5", 9: 2, 10: 4}}}

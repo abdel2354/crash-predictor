@@ -14,7 +14,8 @@ try:
     # Try to import your xC4 functions
     from xC4 import (
         CrEaTe_ProTo, EnC_AEs, DeCode_PackEt, xBunnEr, 
-        GeneRaTePk, DecodE_HeX, Ua
+        GeneRaTePk, DecodE_HeX, Ua,
+        EnC_AEs_sync, DeCode_PackEt_sync, Ua_sync
     )
 except ImportError:
     print("❌ Failed to import xC4 functions!")
@@ -61,7 +62,7 @@ class JoinSpamManager:
             url = "https://100067.connect.garena.com/oauth/guest/token/grant"
             headers = {
                 "Host": "100067.connect.garena.com",
-                "User-Agent": Ua(),
+                "User-Agent": Ua_sync(),
                 "Content-Type": "application/x-www-form-urlencoded",
                 "Accept-Encoding": "gzip, deflate, br",
                 "Connection": "close",
@@ -153,13 +154,13 @@ class JoinSpamManager:
             }
             
             # Convert to protobuf
-            proto_hex = CrEaTe_ProTo(payload).hex()
+            proto_hex = asyncio.get_event_loop().run_until_complete(CrEaTe_ProTo(payload)).hex()
             
             # Encrypt
             Key = bytes([89, 103, 38, 116, 99, 37, 68, 69, 117, 104, 54, 37, 90, 99, 94, 56])
             Iv = bytes([54, 111, 121, 90, 68, 114, 50, 50, 69, 51, 121, 99, 104, 106, 77, 37])
             
-            encrypted_payload = bytes.fromhex(EnC_AEs(proto_hex))
+            encrypted_payload = bytes.fromhex(EnC_AEs_sync(proto_hex))
             
             # Send to MajorLogin
             context = ssl._create_unverified_context()
@@ -189,7 +190,7 @@ class JoinSpamManager:
                 response_hex = raw_data.hex()
                 
                 # Parse response
-                response_data = json.loads(DeCode_PackEt(response_hex))
+                response_data = json.loads(DeCode_PackEt_sync(response_hex))
                 bot_uid = response_data["1"]["data"]
                 
                 # Get key/iv
