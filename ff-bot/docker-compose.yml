@@ -1,0 +1,101 @@
+version: '3.8'
+
+services:
+  # ─── Telegram Bot Controller ──────────────────────
+  telegram-bot:
+    build: .
+    container_name: ff-telegram-bot
+    command: python telegram_controller.py
+    environment:
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - BOT_MODE=controller
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./BIGBULL-ERA:/app/BIGBULL-ERA
+      - ./config.json:/app/config.json
+    restart: unless-stopped
+    networks:
+      - ff-network
+
+  # ─── Bot Workers (one per account) ───────────────
+  # Use docker-compose up --scale bot-worker=10
+  # Or define them individually below:
+
+  bot-0:
+    build: .
+    container_name: ff-bot-0
+    command: python bot_worker.py
+    environment:
+      - BOT_INDEX=0
+      - BOT_REGION=ME
+      - ACCOUNTS_FILE=BIGBULL-ERA/ACCOUNTS/accounts-ME.json
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./BIGBULL-ERA:/app/BIGBULL-ERA
+    restart: unless-stopped
+    networks:
+      - ff-network
+
+  bot-1:
+    build: .
+    container_name: ff-bot-1
+    command: python bot_worker.py
+    environment:
+      - BOT_INDEX=1
+      - BOT_REGION=ME
+      - ACCOUNTS_FILE=BIGBULL-ERA/ACCOUNTS/accounts-ME.json
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./BIGBULL-ERA:/app/BIGBULL-ERA
+    restart: unless-stopped
+    networks:
+      - ff-network
+
+  bot-2:
+    build: .
+    container_name: ff-bot-2
+    command: python bot_worker.py
+    environment:
+      - BOT_INDEX=2
+      - BOT_REGION=ME
+      - ACCOUNTS_FILE=BIGBULL-ERA/ACCOUNTS/accounts-ME.json
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./BIGBULL-ERA:/app/BIGBULL-ERA
+    restart: unless-stopped
+    networks:
+      - ff-network
+
+  bot-3:
+    build: .
+    container_name: ff-bot-3
+    command: python bot_worker.py
+    environment:
+      - BOT_INDEX=3
+      - BOT_REGION=ME
+      - ACCOUNTS_FILE=BIGBULL-ERA/ACCOUNTS/accounts-ME.json
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./BIGBULL-ERA:/app/BIGBULL-ERA
+    restart: unless-stopped
+    networks:
+      - ff-network
+
+  # ─── Manager (coordinates all bots) ──────────────
+  manager:
+    build: .
+    container_name: ff-manager
+    command: python multi_account_manager.py
+    environment:
+      - BOT_MODE=manager
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./BIGBULL-ERA:/app/BIGBULL-ERA
+    stdin_open: true
+    tty: true
+    networks:
+      - ff-network
+
+networks:
+  ff-network:
+    driver: bridge
