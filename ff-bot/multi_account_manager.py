@@ -86,6 +86,9 @@ class MultiAccountManager:
             success = await bot.login()
             if success:
                 self.bots.append(bot)
+                # Start background listener for squad codes etc.
+                bot._listener_task = asyncio.create_task(bot.online_listener())
+                bot._keepalive_task = asyncio.create_task(bot.keep_alive_loop())
                 results.append({"name": name, "uid": uid, "status": "online"})
                 logger.info(f"{name} logged in successfully!")
             else:
@@ -175,30 +178,13 @@ class MultiAccountManager:
         members = [b for b in members if b != leader]
 
         logger.info(f"Leader {leader.name} creating squad...")
+        leader.squad_code = None
         await leader.create_squad()
-        await asyncio.sleep(3)
+        await asyncio.sleep(2)
 
-        # Read and parse squad code from response
-        if leader.online_reader:
-            try:
-                data = await asyncio.wait_for(leader.online_reader.read(65536), timeout=5)
-                if data:
-                    h = data.hex()
-                    if h.startswith("0500"):
-                        decoded = await DeCode_PackEt(h[10:])
-                        pj = json.loads(decoded)
-                        if '5' in pj:
-                            f5 = pj['5'].get('data', pj['5']) if isinstance(pj['5'], dict) else {}
-                            if isinstance(f5, dict) and '31' in f5:
-                                code_val = f5['31'].get('data') if isinstance(f5['31'], dict) else f5['31']
-                                if code_val:
-                                    leader.squad_code = str(code_val)
-            except (asyncio.TimeoutError, Exception) as e:
-                logger.warning(f"Squad code read: {e}")
-
-        # Fallback: wait for listener to pick up code
+        # Wait for online_listener to extract squad code
         retries = 0
-        while not leader.squad_code and retries < 10:
+        while not leader.squad_code and retries < 15:
             await asyncio.sleep(1)
             retries += 1
 
@@ -222,35 +208,35 @@ class MultiAccountManager:
             "total": len(joined) + 1
         }
 
-    def _group_bots_by_server(self):
-        """Group online bots by their actual server IP (bots on same server can squad)."""
+    def _group_bots_by_region(self):
+        """Group online bots by region (bots in same region can squad together)."""
         groups = {}
         for bot in self.bots:
-            if bot.connected and bot.online_ip:
-                server = bot.online_ip
-                if server not in groups:
-                    groups[server] = []
-                groups[server].append(bot)
+            if bot.connected:
+                region = getattr(bot, 'region', 'UNKNOWN')
+                if region not in groups:
+                    groups[region] = []
+                groups[region].append(bot)
         return groups
 
     async def form_multi_squads(self):
-        """Form multiple squads from available bots, grouped by server."""
-        server_groups = self._group_bots_by_server()
-        for server_ip, bots in server_groups.items():
-            logger.info(f"Server {server_ip}: {len(bots)} bots")
+        """Form multiple squads from available bots, grouped by region."""
+        region_groups = self._group_bots_by_region()
+        for region, bots in region_groups.items():
+            logger.info(f"Region {region}: {len(bots)} bots")
 
-        total_bots = sum(len(b) for b in server_groups.values())
+        total_bots = sum(len(b) for b in region_groups.values())
         if total_bots < 2:
             return []
 
         squads = []
-        for server_ip, server_bots in server_groups.items():
-            if len(server_bots) < 2:
-                logger.info(f"Skipping server {server_ip}: only {len(server_bots)} bot")
+        for region, region_bots in region_groups.items():
+            if len(region_bots) < 2:
+                logger.info(f"Skipping region {region}: only {len(region_bots)} bot")
                 continue
 
-            for i in range(0, len(server_bots), 4):
-                group = server_bots[i:i+4]
+            for i in range(0, len(region_bots), 4):
+                group = region_bots[i:i+4]
                 if len(group) < 2:
                     break
 
@@ -259,28 +245,13 @@ class MultiAccountManager:
 
                 logger.info(f"Squad {len(squads)+1}: Leader={leader.name}, Members={[b.name for b in members]}")
 
+                leader.squad_code = None
                 await leader.create_squad()
-                await asyncio.sleep(3)
+                await asyncio.sleep(2)
 
-                if leader.online_reader:
-                    try:
-                        data = await asyncio.wait_for(leader.online_reader.read(65536), timeout=5)
-                        if data:
-                            h = data.hex()
-                            if h.startswith("0500"):
-                                decoded = await DeCode_PackEt(h[10:])
-                                pj = json.loads(decoded)
-                                if '5' in pj:
-                                    f5 = pj['5'].get('data', pj['5']) if isinstance(pj['5'], dict) else {}
-                                    if isinstance(f5, dict) and '31' in f5:
-                                        code_val = f5['31'].get('data') if isinstance(f5['31'], dict) else f5['31']
-                                        if code_val:
-                                            leader.squad_code = str(code_val)
-                    except (asyncio.TimeoutError, Exception):
-                        pass
-
+                # Wait for online_listener to extract squad code
                 retries = 0
-                while not leader.squad_code and retries < 8:
+                while not leader.squad_code and retries < 15:
                     await asyncio.sleep(1)
                     retries += 1
 
