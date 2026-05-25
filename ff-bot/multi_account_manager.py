@@ -146,12 +146,18 @@ class MultiAccountManager:
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
-                        if resp.status == 200:
-                            result = await resp.text()
-                            results.append({"name": name, "uid": uid, "success": True, "msg": result[:80]})
+                        body = await resp.text()
+                        try:
+                            data = json.loads(body)
+                        except Exception:
+                            data = {"raw": body}
+                        if resp.status == 200 and data.get("success", True):
+                            results.append({"name": name, "uid": uid, "success": True, "msg": body[:80]})
                             logger.info(f"{name} joined guild {guild_id}")
                         else:
-                            results.append({"name": name, "uid": uid, "success": False, "msg": f"HTTP {resp.status}"})
+                            err = data.get("raw_response", data.get("error", body))[:60]
+                            results.append({"name": name, "uid": uid, "success": False, "msg": err})
+                            logger.warning(f"{name} guild join failed: {err}")
             except Exception as e:
                 results.append({"name": name, "uid": uid, "success": False, "msg": str(e)[:50]})
 
