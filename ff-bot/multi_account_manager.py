@@ -151,7 +151,7 @@ class MultiAccountManager:
     # ─── Squad Operations ───────────────────────────────────────────
 
     async def form_squad(self, leader_index=0):
-        """Form a squad: leader creates, others join."""
+        """Form a squad: leader creates, others join via code or invite."""
         if len(self.bots) < 2:
             return False, "Need at least 2 online bots"
 
@@ -161,36 +161,65 @@ class MultiAccountManager:
 
         leader = online_bots[leader_index]
         members = online_bots[:4]  # Max 4 in squad
-        members.remove(leader)
+        members = [b for b in members if b != leader]
+
+        # Ensure all members have auto-accept enabled
+        for bot in members:
+            bot.auto_accept_invites = True
 
         # Leader creates squad
         logger.info(f"Leader {leader.name} creating squad...")
         await leader.create_squad()
-        await asyncio.sleep(2)
+        await asyncio.sleep(3)
 
-        # Wait for squad code
+        # Wait for squad code from server response
         retries = 0
-        while not leader.squad_code and retries < 10:
+        while not leader.squad_code and retries < 15:
             await asyncio.sleep(1)
             retries += 1
 
-        if not leader.squad_code:
-            return False, "Could not get squad code"
-
         code = leader.squad_code
-        logger.info(f"Squad code: {code}")
+        if code:
+            logger.info(f"Squad code: {code}")
 
-        # Members join
+        # Method 1: Members join by code
         joined = []
-        for bot in members:
-            logger.info(f"{bot.name} joining squad {code}...")
-            await bot.join_squad(code)
-            joined.append(bot.name)
-            await asyncio.sleep(1.5)
+        if code:
+            for bot in members:
+                logger.info(f"{bot.name} joining squad by code {code}...")
+                await bot.join_squad(code)
+                await asyncio.sleep(2)
+
+            # Wait and verify who actually joined
+            await asyncio.sleep(3)
+            for bot in members:
+                if bot.in_squad:
+                    joined.append(bot.name)
+                    logger.info(f"{bot.name} confirmed in squad")
+
+        # Method 2: If code-join failed, try invite-based flow
+        not_joined = [b for b in members if b.name not in joined]
+        if not_joined:
+            logger.info(f"{len(not_joined)} bots didn't join by code, trying invite flow...")
+            for bot in not_joined:
+                if bot.account_uid:
+                    logger.info(f"Leader sending invite to {bot.name} (UID: {bot.account_uid})...")
+                    await leader.send_invite(bot.account_uid)
+                    await asyncio.sleep(2)
+
+            # Wait for auto-accept to process
+            await asyncio.sleep(5)
+            for bot in not_joined:
+                if bot.in_squad:
+                    joined.append(bot.name)
+                    logger.info(f"{bot.name} joined via invite")
+
+        if not joined:
+            return False, "No members could join the squad"
 
         return True, {
             "leader": leader.name,
-            "code": code,
+            "code": code or "invite-based",
             "members": joined,
             "total": len(joined) + 1
         }
@@ -209,8 +238,21 @@ class MultiAccountManager:
             ok, squad_info = await self.form_squad()
             if not ok:
                 logger.error(f"Squad formation failed: {squad_info}")
+                # Wait before retrying
+                await asyncio.sleep(5)
                 continue
 
+            # Verify at least 1 member joined before starting match
+            squad_members = squad_info.get("members", [])
+            if not squad_members:
+                logger.error("No members in squad, skipping match")
+                for bot in online_bots[:4]:
+                    await bot.leave_squad()
+                    await asyncio.sleep(0.5)
+                await asyncio.sleep(3)
+                continue
+
+            logger.info(f"Squad ready with {len(squad_members)} members: {squad_members}")
             await asyncio.sleep(2)
 
             # Leader starts match
@@ -230,7 +272,7 @@ class MultiAccountManager:
             results.append({
                 "cycle": cycle + 1,
                 "leader": leader.name,
-                "members": squad_info.get("members", []),
+                "members": squad_members,
                 "status": "completed"
             })
 

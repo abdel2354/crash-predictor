@@ -368,7 +368,7 @@ async def GeT_Status(PLayer_Uid , K , V):
 async def SPam_Room(Uid , Rm , Nm , K , V):
     fields = {1: 78, 2: {1: int(Rm), 2: f"[{await ArA_CoLor()}]{Nm}", 3: {2: 1, 3: 1}, 4: 330, 5: 1, 6: 201, 10: int(await xBunnEr()), 11: int(Uid), 12: 1}}
     return await GeneRaTePk((await CrEaTe_ProTo(fields)).hex() , '0e15' , K , V)
-async def GenJoinSquadsPacket(code,  K , V):
+async def GenJoinSquadsPacket(code,  K , V, region="ME"):
     fields = {}
     fields[1] = 4
     fields[2] = {}
@@ -382,7 +382,13 @@ async def GenJoinSquadsPacket(code,  K , V):
     fields[2][9][8] = "1.111.1"
     fields[2][9][9] = 5
     fields[2][9][10] = 1
-    return await GeneRaTePk((await CrEaTe_ProTo(fields)).hex() , '0515' , K , V)   
+    if region.lower() == "ind":
+        packet = '0514'
+    elif region.lower() == "bd":
+        packet = "0519"
+    else:
+        packet = "0515"
+    return await GeneRaTePk((await CrEaTe_ProTo(fields)).hex() , packet , K , V)   
 async def GenJoinGlobaL(owner , code , K, V):
     fields = {
     1: 4,
@@ -397,14 +403,20 @@ async def GenJoinGlobaL(owner , code , K, V):
     }
     return await GeneRaTePk((await CrEaTe_ProTo(fields)).hex() , '0515' , K , V)
 
-async def FS(K,V):
+async def FS(K,V,region="ME"):
     fields = {
             1: 9,
             2: {
                 1: 13256361202
             }
             }
-    return await GeneRaTePk((await CrEaTe_ProTo(fields)).hex() , '0515' , K , V)
+    if region.lower() == "ind":
+        packet = '0514'
+    elif region.lower() == "bd":
+        packet = "0519"
+    else:
+        packet = "0515"
+    return await GeneRaTePk((await CrEaTe_ProTo(fields)).hex() , packet , K , V)
 
 
 
@@ -552,11 +564,17 @@ async def SEnd_InV(Nu , Uid , K , V,region):
         packet = "0515"
     return await GeneRaTePk((await CrEaTe_ProTo(fields)).hex() , packet , K , V)
     
-async def ExiT(idT , K , V):
+async def ExiT(idT , K , V, region="ME"):
     fields = {
         1: 7,
         2: {
             1: idT,
         }
         }
-    return await GeneRaTePk((await CrEaTe_ProTo(fields)).hex() , '0515' , K , V) 
+    if region.lower() == "ind":
+        packet = '0514'
+    elif region.lower() == "bd":
+        packet = "0519"
+    else:
+        packet = "0515"
+    return await GeneRaTePk((await CrEaTe_ProTo(fields)).hex() , packet , K , V) 

@@ -88,6 +88,9 @@ class BotWorker:
         self.in_match = False
         self.connected = False
         self.clan_id = None
+        self._chat_code = None
+        self._invite_code = None
+        self.auto_accept_invites = True
 
         # Command queue
         self.command_queue = asyncio.Queue()
@@ -449,7 +452,7 @@ class BotWorker:
 
     async def join_squad(self, squad_code):
         """Join an existing squad by code."""
-        packet = await GenJoinSquadsPacket(squad_code, self.key, self.iv)
+        packet = await GenJoinSquadsPacket(squad_code, self.key, self.iv, self.region)
         if await self.send_packet(packet):
             self.in_squad = True
             self.squad_code = squad_code
@@ -460,7 +463,7 @@ class BotWorker:
 
     async def leave_squad(self):
         """Leave current squad."""
-        packet = await ExiT(None, self.key, self.iv)
+        packet = await ExiT(None, self.key, self.iv, self.region)
         if await self.send_packet(packet):
             self.in_squad = False
             self.squad_code = None
@@ -471,7 +474,7 @@ class BotWorker:
 
     async def start_match(self):
         """Start a match (must be squad leader)."""
-        packet = await FS(self.key, self.iv)
+        packet = await FS(self.key, self.iv, self.region)
         if await self.send_packet(packet):
             self.in_match = True
             self.status = "in_match"
@@ -488,6 +491,21 @@ class BotWorker:
         """Send squad invite to a player."""
         packet = await SEnd_InV(target_uid, self.account_uid, self.key, self.iv, self.region)
         return await self.send_packet(packet)
+
+    async def accept_squad_invite(self, squad_owner, invite_code):
+        """Accept a squad invite from another player."""
+        try:
+            # Join the squad using the invite code
+            join_packet = await GenJoinSquadsPacket(invite_code, self.key, self.iv, self.region)
+            if await self.send_packet(join_packet):
+                self.in_squad = True
+                self.status = "in_squad"
+                logger.info(f"{self.name} accepted invite from {squad_owner}, code={invite_code}")
+                return True
+            return False
+        except Exception as e:
+            logger.error(f"{self.name} failed to accept invite: {e}")
+            return False
 
     # ─── Guild Operations (API-based, no TCP needed) ────────────────
 
@@ -562,9 +580,15 @@ class BotWorker:
                 if self.online_writer and not self.online_writer.is_closing():
                     # Simple ping packet
                     fields = {1: 99, 2: {1: int(time.time())}}
+                    if self.region.upper() == 'IND':
+                        pkt_header = '0514'
+                    elif self.region.upper() == 'BD':
+                        pkt_header = '0519'
+                    else:
+                        pkt_header = '0515'
                     packet = await GeneRaTePk(
                         (await CrEaTe_ProTo(fields)).hex(),
-                        '0515' if self.region not in ('IND', 'BD') else ('0514' if self.region == 'IND' else '0519'),
+                        pkt_header,
                         self.key, self.iv
                     )
                     await self.send_packet(packet)
@@ -574,13 +598,74 @@ class BotWorker:
 
     # ─── Online Listener ────────────────────────────────────────────
 
+    async def _handle_squad_data(self, pj):
+        """Extract squad/invite data from parsed packet and auto-accept if enabled."""
+        # Check for squad exit/cancel (type 6 or 7)
+        pkt_type = pj.get('1', {}).get('data') if isinstance(pj.get('1'), dict) else pj.get('1')
+        if pkt_type in [6, 7]:
+            self.in_squad = False
+            self.in_match = False
+            self.squad_code = None
+            self.status = "online"
+            logger.info(f"{self.name}: Squad ended (type {pkt_type})")
+            return
+
+        # Squad data with field 5
+        if '5' in pj and isinstance(pj['5'], dict):
+            f5 = pj['5'].get('data', pj['5'])
+            if isinstance(f5, dict):
+                # Squad code in field 5.31
+                if '31' in f5:
+                    code = f5['31'].get('data') if isinstance(f5['31'], dict) else f5['31']
+                    if code:
+                        self.squad_code = str(code)
+                        self.in_squad = True
+                        self.status = "in_squad"
+                        logger.info(f"{self.name}: Squad code: {self.squad_code}")
+                # Chat code in field 5.14
+                if '14' in f5:
+                    cc = f5['14'].get('data') if isinstance(f5['14'], dict) else f5['14']
+                    if cc:
+                        self._chat_code = str(cc)
+                # Invite code in field 5.8
+                if '8' in f5:
+                    ic = f5['8'].get('data') if isinstance(f5['8'], dict) else f5['8']
+                    if ic:
+                        self._invite_code = str(ic)
+                        logger.info(f"{self.name}: Invite code: {self._invite_code}")
+
+                # Auto-accept: if we got an invite and we're not already in a squad
+                squad_owner = f5.get('1', {}).get('data') if isinstance(f5.get('1'), dict) else f5.get('1')
+                invite_uid = None
+                if '2' in f5 and isinstance(f5['2'], dict):
+                    f5_2 = f5['2'].get('data', f5['2'])
+                    if isinstance(f5_2, dict):
+                        invite_uid = f5_2.get('1', {}).get('data') if isinstance(f5_2.get('1'), dict) else f5_2.get('1')
+
+                if self.auto_accept_invites and not self.in_squad and self._invite_code and squad_owner:
+                    logger.info(f"{self.name}: Auto-accepting invite from {squad_owner} (code={self._invite_code})")
+                    await self.accept_squad_invite(squad_owner, self._invite_code)
+
+        # Also handle packet type 2 (invite packet)
+        pkt_type_val = pj.get('1', {}).get('data') if isinstance(pj.get('1'), dict) else pj.get('1')
+        if pkt_type_val == 2 and self.auto_accept_invites and not self.in_squad:
+            # Type 2 is an invite — extract invite code from field 2
+            if '2' in pj and isinstance(pj['2'], dict):
+                f2 = pj['2'].get('data', pj['2'])
+                if isinstance(f2, dict):
+                    invite_code = f2.get('8', {}).get('data') if isinstance(f2.get('8'), dict) else f2.get('8')
+                    owner = f2.get('1', {}).get('data') if isinstance(f2.get('1'), dict) else f2.get('1')
+                    if invite_code and owner:
+                        logger.info(f"{self.name}: Invite packet (type 2) from {owner}, code={invite_code}")
+                        await self.accept_squad_invite(owner, invite_code)
+
     async def online_listener(self):
         """Listen for packets on the Online TCP connection."""
         while self.connected and self.online_reader:
             try:
                 data = await self.online_reader.read(9999)
                 if not data:
-                    logger.warning("Online connection closed by server")
+                    logger.warning(f"{self.name}: Online connection closed by server")
                     self.connected = False
                     break
 
@@ -593,38 +678,9 @@ class BotWorker:
                         decoded = await DeCode_PackEt(raw_proto)
                         if decoded:
                             pj = json.loads(decoded)
-                            pkt_type = pj.get('1', {}).get('data') if isinstance(pj.get('1'), dict) else None
-
-                            # Squad exit/cancel (type 6 or 7)
-                            if pkt_type in [6, 7]:
-                                self.in_squad = False
-                                self.in_match = False
-                                self.status = "online"
-                                logger.info("Squad ended (type 6/7)")
-
-                            # Squad data with field 5
-                            if '5' in pj and isinstance(pj['5'], dict):
-                                f5 = pj['5'].get('data', pj['5'])
-                                if isinstance(f5, dict):
-                                    # Squad code in field 5.31
-                                    if '31' in f5:
-                                        code = f5['31'].get('data') if isinstance(f5['31'], dict) else f5['31']
-                                        if code:
-                                            self.squad_code = str(code)
-                                            logger.info(f"Squad code: {self.squad_code}")
-                                    # Chat code in field 5.14
-                                    if '14' in f5:
-                                        cc = f5['14'].get('data') if isinstance(f5['14'], dict) else f5['14']
-                                        if cc:
-                                            self._chat_code = str(cc)
-                                    # Invite code in field 5.8
-                                    if '8' in f5:
-                                        ic = f5['8'].get('data') if isinstance(f5['8'], dict) else f5['8']
-                                        if ic:
-                                            self._invite_code = str(ic)
-                                            logger.info(f"Invite code: {self._invite_code}")
+                            await self._handle_squad_data(pj)
                     except Exception as e:
-                        logger.debug(f"0500 parse: {e}")
+                        logger.debug(f"{self.name}: 0500 parse: {e}")
 
                 # 0514/0515/0519 packets may be encrypted
                 elif data_hex.startswith(("0514", "0515", "0519")):
@@ -635,20 +691,14 @@ class BotWorker:
                             decoded = await DeCode_PackEt(decrypted)
                             if decoded:
                                 pj = json.loads(decoded)
-                                if '5' in pj and isinstance(pj['5'], dict):
-                                    f5 = pj['5'].get('data', pj['5'])
-                                    if isinstance(f5, dict) and '31' in f5:
-                                        code = f5['31'].get('data') if isinstance(f5['31'], dict) else f5['31']
-                                        if code:
-                                            self.squad_code = str(code)
-                                            logger.info(f"Squad code (encrypted): {self.squad_code}")
+                                await self._handle_squad_data(pj)
                     except Exception as e:
-                        logger.debug(f"Encrypted packet parse: {e}")
+                        logger.debug(f"{self.name}: Encrypted packet parse: {e}")
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.error(f"Online listener error: {e}")
+                logger.error(f"{self.name}: Online listener error: {e}")
                 await asyncio.sleep(1)
 
     # ─── Main Run Loop ──────────────────────────────────────────────
