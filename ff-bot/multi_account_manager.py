@@ -133,16 +133,29 @@ class MultiAccountManager:
                 await asyncio.sleep(delay)
         return results
 
-    async def guild_join_all_api(self, guild_id, delay=2):
-        """All accounts join guild using API (no TCP needed)."""
+    async def _api_guild_leave(self, uid, pw, guild_id="0"):
+        """Leave current guild via API."""
         import aiohttp
+        base = "https://danger-guild-management-web.vercel.app"
+        url = f"{base}/leave?guild_id={guild_id}&uid={uid}&password={pw}"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+                    return resp.status == 200
+        except Exception:
+            return False
+
+    async def guild_join_all_api(self, guild_id, delay=2):
+        """All accounts join guild using API (no TCP needed). Auto-leaves old guild if needed."""
+        import aiohttp
+        base = "https://danger-guild-management-web.vercel.app"
         accounts = self.load_accounts()
         results = []
         for i, acc in enumerate(accounts):
             uid = acc['uid']
             pw = acc['password']
             name = acc.get('name', f'Bot-{i}')
-            url = f"https://danger-guild-management-web.vercel.app/join?guild_id={guild_id}&uid={uid}&password={pw}"
+            url = f"{base}/join?guild_id={guild_id}&uid={uid}&password={pw}"
             try:
                 async with aiohttp.ClientSession() as session:
                     async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
@@ -151,11 +164,28 @@ class MultiAccountManager:
                             data = json.loads(body)
                         except Exception:
                             data = {"raw": body}
-                        if resp.status == 200 and data.get("success", True):
-                            results.append({"name": name, "uid": uid, "success": True, "msg": body[:80]})
+
+                        raw = data.get("raw_response", "")
+                        if "ALREADY_IN_OTHER_CLAN" in str(raw) or "ALREADY_IN_OTHER_CLAN" in body:
+                            logger.info(f"{name} already in clan, leaving first...")
+                            await self._api_guild_leave(uid, pw)
+                            await asyncio.sleep(1)
+                            async with session.get(url, timeout=aiohttp.ClientTimeout(total=15)) as resp2:
+                                body = await resp2.text()
+                                try:
+                                    data = json.loads(body)
+                                except Exception:
+                                    data = {"raw": body}
+
+                        if data.get("success", False):
+                            results.append({"name": name, "uid": uid, "success": True, "msg": "Joined!"})
                             logger.info(f"{name} joined guild {guild_id}")
                         else:
-                            err = data.get("raw_response", data.get("error", body))[:60]
+                            err = data.get("raw_response", data.get("error", body))
+                            if isinstance(err, str):
+                                err = err.strip()[:60]
+                            else:
+                                err = str(err)[:60]
                             results.append({"name": name, "uid": uid, "success": False, "msg": err})
                             logger.warning(f"{name} guild join failed: {err}")
             except Exception as e:
