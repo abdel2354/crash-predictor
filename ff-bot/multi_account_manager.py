@@ -151,7 +151,7 @@ class MultiAccountManager:
     # ─── Squad Operations ───────────────────────────────────────────
 
     async def form_squad(self, leader_index=0):
-        """Form a squad: leader creates, others join via code or invite."""
+        """Form a squad: leader creates, then invites members who auto-accept."""
         if len(self.bots) < 2:
             return False, "Need at least 2 online bots"
 
@@ -160,19 +160,18 @@ class MultiAccountManager:
             return False, "Need at least 2 connected bots"
 
         leader = online_bots[leader_index]
-        members = online_bots[:4]  # Max 4 in squad
+        members = online_bots[:4]
         members = [b for b in members if b != leader]
 
-        # Ensure all members have auto-accept enabled
         for bot in members:
             bot.auto_accept_invites = True
 
-        # Leader creates squad
+        # Step 1: Leader creates squad
         logger.info(f"Leader {leader.name} creating squad...")
         await leader.create_squad()
         await asyncio.sleep(3)
 
-        # Wait for squad code from server response
+        # Wait for squad code
         retries = 0
         while not leader.squad_code and retries < 15:
             await asyncio.sleep(1)
@@ -182,37 +181,20 @@ class MultiAccountManager:
         if code:
             logger.info(f"Squad code: {code}")
 
-        # Method 1: Members join by code
+        # Step 2: Leader sends invite to each member (same flow as main.py)
         joined = []
-        if code:
-            for bot in members:
-                logger.info(f"{bot.name} joining squad by code {code}...")
-                await bot.join_squad(code)
+        for bot in members:
+            if bot.account_uid:
+                logger.info(f"Leader inviting {bot.name} (UID: {bot.account_uid})...")
+                await leader.send_invite(bot.account_uid, squad_size=4)
                 await asyncio.sleep(2)
 
-            # Wait and verify who actually joined
-            await asyncio.sleep(3)
-            for bot in members:
-                if bot.in_squad:
-                    joined.append(bot.name)
-                    logger.info(f"{bot.name} confirmed in squad")
-
-        # Method 2: If code-join failed, try invite-based flow
-        not_joined = [b for b in members if b.name not in joined]
-        if not_joined:
-            logger.info(f"{len(not_joined)} bots didn't join by code, trying invite flow...")
-            for bot in not_joined:
-                if bot.account_uid:
-                    logger.info(f"Leader sending invite to {bot.name} (UID: {bot.account_uid})...")
-                    await leader.send_invite(bot.account_uid)
-                    await asyncio.sleep(2)
-
-            # Wait for auto-accept to process
-            await asyncio.sleep(5)
-            for bot in not_joined:
-                if bot.in_squad:
-                    joined.append(bot.name)
-                    logger.info(f"{bot.name} joined via invite")
+        # Step 3: Wait for auto-accept to process invites
+        await asyncio.sleep(5)
+        for bot in members:
+            if bot.in_squad:
+                joined.append(bot.name)
+                logger.info(f"{bot.name} confirmed in squad")
 
         if not joined:
             return False, "No members could join the squad"

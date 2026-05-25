@@ -17,7 +17,8 @@ from xC4 import (
     CrEaTe_ProTo, GeneRaTePk, EnC_PacKeT, DEc_PacKeT,
     OpEnSq, GenJoinSquadsPacket, ExiT, FS, Emote_k,
     SEnd_InV, EnC_AEs, DEc_AEs, EnC_Uid, Ua, DeCode_PackEt,
-    AutH_Chat, GeTSQDaTa, DecodE_HeX
+    AutH_Chat, GeTSQDaTa, DecodE_HeX,
+    redzed, RejectMSGtaxt, cHSq
 )
 
 from Pb2 import MajoRLoGinrEq_pb2, MajoRLoGinrEs_pb2
@@ -440,6 +441,20 @@ class BotWorker:
                 return False
         return False
 
+    async def send_chat_packet(self, packet):
+        """Send packet via Chat/Whisper TCP connection."""
+        if self.whisper_writer and not self.whisper_writer.is_closing():
+            try:
+                if isinstance(packet, str):
+                    packet = bytes.fromhex(packet)
+                self.whisper_writer.write(packet)
+                await self.whisper_writer.drain()
+                return True
+            except Exception as e:
+                logger.error(f"Send chat packet error: {e}")
+                return False
+        return False
+
     async def create_squad(self):
         """Create a new squad (become leader)."""
         packet = await OpEnSq(self.key, self.iv, self.region)
@@ -473,30 +488,40 @@ class BotWorker:
         return False
 
     async def start_match(self):
-        """Start a match (must be squad leader)."""
+        """Start a match (must be squad leader). Spam FS packet like main.py."""
         packet = await FS(self.key, self.iv, self.region)
-        if await self.send_packet(packet):
-            self.in_match = True
-            self.status = "in_match"
-            logger.info(f"{self.name} started match")
-            return True
-        return False
+        import time
+        start_time = time.time()
+        spam_duration = 10
+        count = 0
+        while time.time() - start_time < spam_duration:
+            if await self.send_packet(packet):
+                count += 1
+            else:
+                break
+            await asyncio.sleep(0.2)
+        self.in_match = True
+        self.status = "in_match"
+        logger.info(f"{self.name} started match (sent {count} FS packets)")
+        return count > 0
 
     async def send_emote(self, target_uid, emote_id):
         """Send emote to a player."""
         packet = await Emote_k(int(target_uid), int(emote_id), self.key, self.iv, self.region)
         return await self.send_packet(packet)
 
-    async def send_invite(self, target_uid):
-        """Send squad invite to a player."""
-        packet = await SEnd_InV(target_uid, self.account_uid, self.key, self.iv, self.region)
-        return await self.send_packet(packet)
+    async def send_invite(self, target_uid, squad_size=4):
+        """Send squad invite to a player (cHSq + SEnd_InV like main.py)."""
+        ch_packet = await cHSq(squad_size, int(target_uid), self.key, self.iv, self.region)
+        await self.send_packet(ch_packet)
+        await asyncio.sleep(0.3)
+        inv_packet = await SEnd_InV(squad_size, int(target_uid), self.key, self.iv, self.region)
+        return await self.send_packet(inv_packet)
 
     async def accept_squad_invite(self, squad_owner, invite_code):
-        """Accept a squad invite from another player."""
+        """Accept a squad invite from another player using the correct packet."""
         try:
-            # Join the squad using the invite code
-            join_packet = await GenJoinSquadsPacket(invite_code, self.key, self.iv, self.region)
+            join_packet = await redzed(int(squad_owner), invite_code, self.key, self.iv, self.region)
             if await self.send_packet(join_packet):
                 self.in_squad = True
                 self.status = "in_squad"
@@ -600,6 +625,8 @@ class BotWorker:
 
     async def _handle_squad_data(self, pj):
         """Extract squad/invite data from parsed packet and auto-accept if enabled."""
+        pkt_type_raw = pj.get('1', {})
+        logger.info(f"{self.name}: Packet received, type={pkt_type_raw}, keys={list(pj.keys())}")
         # Check for squad exit/cancel (type 6 or 7)
         pkt_type = pj.get('1', {}).get('data') if isinstance(pj.get('1'), dict) else pj.get('1')
         if pkt_type in [6, 7]:
@@ -645,6 +672,16 @@ class BotWorker:
                 if self.auto_accept_invites and not self.in_squad and self._invite_code and squad_owner:
                     logger.info(f"{self.name}: Auto-accepting invite from {squad_owner} (code={self._invite_code})")
                     await self.accept_squad_invite(squad_owner, self._invite_code)
+
+                # Chat auth: when in squad, authenticate to squad chat (critical for match)
+                if self.in_squad and '14' in f5 and '31' in f5:
+                    try:
+                        owner_uid, chat_code, squad_code = await GeTSQDaTa(pj)
+                        chat_auth = await AutH_Chat(3, owner_uid, chat_code, self.key, self.iv)
+                        await self.send_chat_packet(chat_auth)
+                        logger.info(f"{self.name}: Chat authenticated for squad (owner={owner_uid})")
+                    except Exception as e:
+                        logger.debug(f"{self.name}: Chat auth skipped: {e}")
 
         # Also handle packet type 2 (invite packet)
         pkt_type_val = pj.get('1', {}).get('data') if isinstance(pj.get('1'), dict) else pj.get('1')

@@ -144,7 +144,7 @@ async def Fix_PackEt(parsed_results):
         result_dict[result.field] = field_data
     return result_dict
     
-async def redzed(uid,code,K,V):
+async def redzed(uid,code,K,V,region="ME"):
     fields = {
         1: 4,
         2: {
@@ -162,9 +162,15 @@ async def redzed(uid,code,K,V):
             10: str(code),
         }
         }
-    return await GeneRaTePk((await CrEaTe_ProTo(fields)).hex() , '0515' , K , V)
+    if region.lower() == "ind":
+        packet = '0514'
+    elif region.lower() == "bd":
+        packet = "0519"
+    else:
+        packet = "0515"
+    return await GeneRaTePk((await CrEaTe_ProTo(fields)).hex() , packet , K , V)
 
-async def RejectMSGtaxt(squad_owner,uid, key, iv):
+async def RejectMSGtaxt(squad_owner,uid, key, iv, region="ME"):
     random_banner = f"""
 [000000]
 [000000]
@@ -246,7 +252,13 @@ async def RejectMSGtaxt(squad_owner,uid, key, iv):
         4: random_banner
     }
     }
-    return await GeneRaTePk((await CrEaTe_ProTo(fields)).hex() , '0515' , key, iv)
+    if region.lower() == "ind":
+        pkt = '0514'
+    elif region.lower() == "bd":
+        pkt = "0519"
+    else:
+        pkt = "0515"
+    return await GeneRaTePk((await CrEaTe_ProTo(fields)).hex() , pkt , key, iv)
 
 async def DeCode_PackEt(input_text):
     try:
