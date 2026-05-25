@@ -1,195 +1,113 @@
-# FF-Bot Full System Research Report
+# FF-Bot Research Report — Guild Glory Farming System
 
-## What We Have (Inside the Code)
+## How Glory Bot Services Work (ffglory.in, guildglory.com)
 
-### 1. Connection & Authentication Flow (COMPLETE)
+After researching commercial glory bot services, here's how they operate:
+
+### The Glory Farming Method
+1. **Bot accounts join target guild** via Guild Join API
+2. **Bots form squads** (4 per squad, all guild members)
+3. **Squad leaders spam FS** (match start) → server marks bots as INGAME (status 5)
+4. **Guild earns glory + dog tags** while members are "in match"
+5. **Bots leave squad, repeat** the cycle continuously (24/7)
+
+**Key insight:** Bots do NOT need to actually play or appear in-game. 
+Just being in "INGAME" status earns glory for the guild.
+
+### Commercial Pricing (reference)
+| Plan | Squads | Glory | Price | Time |
+|------|--------|-------|-------|------|
+| Basic | 1 (4 bots) | 120K-200K | ₹399 | 8 hrs |
+| Standard | 2 (8 bots) | 200K-400K | ₹779 | 8 hrs |
+| Premium | 3 (12 bots) | 300K-600K | ₹1,149 | 8 hrs |
+| Pro | 4 (16 bots) | 400K-800K | ₹1,499 | 8 hrs |
+
+---
+
+## System Architecture
+
+### Connection Flow
 ```
 Guest Register → Token Grant → MajorLogin → GetLoginData → TCP Connect
 ```
-- `GeNeRaTeAccEss()` — Get access_token + open_id from Garena OAuth
-- `EncRypTMajoRLoGin()` — Build protobuf login payload 
-- `MajorLogin()` — Authenticate and get JWT + server URL
-- `GetLoginData()` — Get server IPs, ports, key, iv, clan data
-- `xAuThSTarTuP()` — Build TCP auth packet
-- `TcPOnLine()` — Connect to Online server (game state, emotes, squads)
-- `TcPChaT()` — Connect to Chat server (messages, commands)
 
-### 2. Packet System (xC4.py - COMPLETE)
-```python
-CrEaTe_ProTo(fields)    # Build protobuf from dict
-GeneRaTePk(Pk, N, K, V) # Encrypt + add header
-EnC_PacKeT(HeX, K, V)   # AES-CBC encrypt
-DEc_PacKeT(HeX, K, V)   # AES-CBC decrypt
-```
+### Protocol Stack
+- **TCP Lobby** (port 39699) — Squad management, social features, matchmaking trigger
+- **TCP Chat** (port 39801) — Messages, commands
+- **UDP Game** (unknown port) — Actual gameplay (movement, shooting) — NOT required for glory
 
-### 3. Squad/Team Packets (COMPLETE)
-| Function | Packet Type | Description |
-|----------|------------|-------------|
-| `OpEnSq(K,V,region)` | type=1 | Create new squad |
-| `GenJoinSquadsPacket(code,K,V)` | type=4 | Join squad by code |
-| `ExiT(idT,K,V)` | type=7 | Leave squad |
-| `FS(K,V)` | type=9 | Start match (fire start) |
-| `SEnd_InV(Nu,Uid,K,V,region)` | type=2 | Send squad invite |
-| `cHSq(Nu,Uid,K,V,region)` | type=17 | Change squad settings |
-| `LagSquad(K,V)` | type=4 | Lag squad packet |
+### Packet Types
+| Function | Type | Description |
+|----------|------|-------------|
+| `OpEnSq(K,V,region)` | 1 | Create squad |
+| `GenJoinSquadsPacket(code,K,V)` | 4 | Join squad by code |
+| `ExiT(idT,K,V)` | 7 | Leave squad |
+| `FS(K,V)` | 9 | Start match (triggers INGAME status) |
+| `Emote_k(...)` | - | Send emote |
+| `SEnd_InV(...)` | 2 | Send squad invite |
 
-### 4. Game Action Packets (AVAILABLE)
-| Function | Description |
-|----------|-------------|
-| `Emote_k(target,emoteId,K,V,region)` | Send emote to player |
-| `Send_Entry_Emote(uid,K,V)` | Entry/arrival animation |
-| `start_match(key,iv,region)` | Start BR match |
-| `create_training_start_packet()` | Enter training mode |
-| `join_custom_room(room_id,pw,K,V,region)` | Join custom room |
-| `create_custom_room(name,pw,max,K,V,region)` | Create custom room |
-
-### 5. APIs (COMPLETE)
-| API | URL | Purpose |
-|-----|-----|---------|
-| Guild Info | `danger-guild-management-web.vercel.app/guild` | Get guild details |
-| Guild Join | `danger-guild-management-web.vercel.app/join` | Join guild with UID+PW |
-| Guild Leave | `danger-guild-management-web.vercel.app/leave` | Leave guild |
-| Add Friend | `mafuuuuu-add.vercel.app/mafu-add_friend` | Add friend |
-| Remove Friend | `mafuuuuu-add.vercel.app/mafu-remove_friend` | Remove friend |
-| Send Likes | Multiple endpoints (get_player_add_1..102) | Mass like a UID |
-| Player Info | `client.ind.freefiremobile.com/GetPlayerPersonalShow` | Get player data |
-| Level Info | `danger-level-info.vercel.app/level/{uid}` | Get level/XP info |
-| Ban Check | `banchack.vercel.app/bancheck` | Check if UID banned |
-
-### 6. Level-Up System (EXISTS but basic)
-```python
-level_up_loop(team_code, target_uid, key, iv, region, chat_type, chat_id)
-```
-Flow: Join team → Start match → Wait → Leave → Repeat
-**LIMITATION:** Only uses ONE bot connection, doesn't manage multiple bots
-
-### 7. Multi-Region Support
-Regions with full URLs: IND, BD, PK, NA, LK, ID, TH, VN, BR, ME
+### Server Response Analysis
+After FS spam, server returns:
+- 30× 15-byte status packets: `{1: UID, 2: 5, 3: 58}`
+- Field 2=5 means INGAME status
+- **No game server IP/port** is sent via TCP
+- This confirms: glory farming works at lobby level only
 
 ---
 
-## What's MISSING (Need to Build)
+## What We Built
 
-### A. Multi-Account TCP Manager
-**Problem:** `main.py` only connects ONE account at a time.
-**Need:** System to connect 10+ accounts simultaneously, each with its own TCP connection.
+### Core Components
+| File | Purpose |
+|------|---------|
+| `bot_worker.py` | Single bot instance (login, TCP, squad, guild) |
+| `multi_account_manager.py` | Orchestrates 10+ bots, glory farming loop |
+| `telegram_controller.py` | Telegram UI for controlling everything |
+| `bbcXgen.py` | Guest account generator (FAST mode) |
+| `xC4.py` | Packet encryption/creation |
 
-**Required Components:**
+### Glory Farming System
 ```python
-class BotAccount:
-    uid: str
-    password: str
-    key: bytes         # From MajorLogin
-    iv: bytes          # From MajorLogin
-    token: str         # JWT
-    online_writer: StreamWriter  # TCP Online connection
-    whisper_writer: StreamWriter # TCP Chat connection
-    region: str
-    status: str        # 'idle', 'in_squad', 'in_match'
-
-class MultiAccountManager:
-    accounts: List[BotAccount]
-    
-    async def login_account(uid, pw, region) -> BotAccount
-    async def login_all_accounts(accounts_list)
-    async def get_idle_accounts() -> List[BotAccount]
-    async def send_packet_to_account(account, packet)
-    async def send_packet_to_all(packet_func, *args)
+# multi_account_manager.py → start_glory_farming()
+# 
+# Loop:
+#   1. guild_join_all_api(guild_id)  ← All bots join guild
+#   2. form_multi_squads()           ← Form squads (4 per squad)
+#   3. FS spam (10s per leader)      ← Trigger INGAME status
+#   4. Wait match_wait seconds       ← Glory accumulates
+#   5. Leave all squads              ← Reset
+#   6. Cooldown → Repeat
 ```
 
-### B. Guild Mass-Join System
-**Have:** `api_guild_join(guild_id, uid, pw)` API
-**Need:** Telegram command that takes guild_id and joins ALL bot accounts
-
-```
-/guildjoin_all <guild_id>
-→ For each M3SBIOS account:
-  → Call api_guild_join(guild_id, uid, password)
-  → Report success/failure
-```
-
-### C. Squad Formation System
-**Have:** `OpEnSq`, `GenJoinSquadsPacket`, `SEnd_InV`
-**Need:** Leader creates squad → sends code → all bots join
-
-```
-Flow:
-1. Leader account calls OpEnSq() → creates squad → gets squad_code
-2. All other bot accounts call GenJoinSquadsPacket(squad_code)
-3. Leader calls FS() → starts match
-```
-**Challenge:** Each bot needs its own TCP connection with key/iv
-
-### D. In-Match Gameplay Simulation
-**MISSING from codebase.** No movement/shoot/action packets found.
-
-**What exists:**
-- `FS(K,V)` — Start match packet
-- `create_training_start_packet()` — Enter training
-
-**What's needed for realistic gameplay:**
-```
-MOVEMENT PACKETS (not in code - need to reverse engineer):
-- Position update (x, y, z coordinates)
-- Movement direction/speed
-- Jump/crouch state
-- Weapon switch
-- Fire/shoot packet
-- Pickup item
-- Use medkit/gloo wall
-- Vehicle enter/exit
-```
-
-**Reality check:** In-match gameplay packets are the hardest part.
-The game server validates game state. Without proper game client
-simulation, the server will likely detect and kick the bot.
-
-**Alternatives for Glory/XP:**
-1. **Custom Room approach:** Create private custom room, all bots join,
-   one bot wins. Custom rooms may give less XP but are more controlled.
-2. **AFK Match approach:** Bots join match but AFK in safe zone.
-   Still gets survival XP (less than active play but simpler).
-3. **Training Mode:** `create_training_start_packet()` exists but
-   training mode doesn't give XP/Glory.
+### Telegram Commands
+| Button | Action |
+|--------|--------|
+| 🔑 Login All | Login all bot accounts to FF servers |
+| ⚔️ Glory Farm | Start glory farming (enter guild ID) |
+| 🛑 Stop Glory | Stop glory farming loop |
+| 📊 Glory Stats | Show farming statistics |
+| 🏰 Guild Join | All bots join a guild |
+| 🚪 Guild Leave | All bots leave a guild |
+| 👥 Squad | Form squad(s) manually |
+| 🎮 Match | Start single match |
+| 🔄 Match Cycles | Run N match cycles |
 
 ---
 
-## Recommended Build Plan
+## Accounts
+- 10 M3SBIOS guest accounts (region: ME)
+- Stored in `BIGBULL-ERA/ACCOUNTS/accounts-ME.json`
+- JWT tokens in `BIGBULL-ERA/TOKENS-JWT/tokens-ME.json`
 
-### Phase 1: Multi-Account Manager + Telegram Control
-- Create `multi_account_manager.py` with BotAccount class
-- Load accounts from BIGBULL-ERA/ACCOUNTS/
-- Login each account → get JWT, key, iv
-- Connect TCP for each account
-- Add Telegram commands: `/status_all`, `/login_all`, `/disconnect_all`
+## Test Results
+- 4/4 bots login to ME servers successfully
+- Squad creation + join works (squad code detected from 0500 packets)
+- FS spam produces INGAME status (field 2=5)
+- CS mode (Clash Squad) request is ignored by server — always defaults to BR
+- Action types 8,10,11,12,14 cause disconnection — only type 9 (FS) is safe
 
-### Phase 2: Guild Mass Operations
-- `/guildjoin_all <guild_id>` → all accounts join guild
-- `/guildleave_all <guild_id>` → all accounts leave guild  
-- Uses existing API (no TCP needed)
-
-### Phase 3: Squad + Match System
-- Leader bot creates squad → gets code
-- All other bots join via code
-- Leader starts match
-- Bots AFK in match (survival XP = glory for guild)
-- After match ends → repeat
-
-### Phase 4: Gameplay Simulation (Advanced)
-- Position update packets (if available from protocol analysis)
-- Random movement within safe zone
-- Occasional shots for kill XP
-- 60% win rate through strategic positioning
-
----
-
-## Key Files Reference
-| File | Lines | Purpose |
-|------|-------|---------|
-| `main.py` | 11,230 | TCP bot, all game logic |
-| `xC4.py` | 562 | Packet creation/encryption |
-| `xHeaders.py` | ~300 | HTTP headers generation |
-| `bbcXgen.py` | 1,060 | Guest account generator |
-| `telegram_bot.py` | 1,270 | Telegram bot interface |
-| `anti-septic-activator.py` | 948 | Multi-region account activation |
-| `Pb2/*.py` | ~20 files | Protobuf definitions |
+## Limitations
+1. **No in-game appearance** — Bots trigger matchmaking but don't connect to game server
+2. **No gameplay simulation** — Movement/shooting requires UDP game protocol (not in codebase)
+3. **Region routing** — Some accounts may route to NA instead of ME despite forced region
+4. **Rate limiting** — Garena enforces 429/403 on account creation
