@@ -144,6 +144,64 @@ async def Fix_PackEt(parsed_results):
         result_dict[result.field] = field_data
     return result_dict
     
+async def RedZed_SendInv(bot_uid, uid, K, V, region="ME"):
+    """Send invite acknowledgment before accepting (required for proper join)."""
+    if region.lower() == "ind":
+        reg_str = "IND"
+        packet = '0514'
+    elif region.lower() == "bd":
+        reg_str = "BD"
+        packet = "0519"
+    else:
+        reg_str = "ME"
+        packet = "0515"
+    fields = {
+        1: 2,
+        2: {
+            1: int(uid),
+            2: reg_str,
+            3: 1,
+            4: 1,
+            6: "M3SBIOS",
+            7: 330,
+            8: 1000,
+            9: 100,
+            10: "DZ",
+            12: 1,
+            13: int(uid),
+            16: 1,
+            17: {
+                2: 159,
+                4: "y[WW",
+                6: 11,
+                8: "1.120.2",
+                9: 3,
+                10: 1
+            },
+            18: 306,
+            19: 18,
+            24: 902000306,
+            26: {},
+            27: {
+                1: 11,
+                2: int(bot_uid),
+                3: 99999999999
+            },
+            28: {},
+            31: {
+                1: 1,
+                2: 32768
+            },
+            32: 32768,
+            34: {
+                1: int(bot_uid),
+                2: 8,
+                3: b"\x10\x15\x08\x0A\x0B\x13\x0C\x0F\x11\x04\x07\x02\x03\x0D\x0E\x12\x01\x05\x06"
+            }
+        }
+    }
+    return await GeneRaTePk((await CrEaTe_ProTo(fields)).hex(), packet, K, V)
+
 async def redzed(uid,code,K,V,region="ME"):
     fields = {
         1: 4,
@@ -415,11 +473,11 @@ async def GenJoinGlobaL(owner , code , K, V):
     }
     return await GeneRaTePk((await CrEaTe_ProTo(fields)).hex() , '0515' , K , V)
 
-async def FS(K,V,region="ME"):
+async def FS(K,V,region="ME",uid=None):
     fields = {
             1: 9,
             2: {
-                1: 13256361202
+                1: int(uid) if uid else 13256361202
             }
             }
     if region.lower() == "ind":

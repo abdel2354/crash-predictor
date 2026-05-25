@@ -18,7 +18,7 @@ from xC4 import (
     OpEnSq, GenJoinSquadsPacket, ExiT, FS, Emote_k,
     SEnd_InV, EnC_AEs, DEc_AEs, EnC_Uid, Ua, DeCode_PackEt,
     AutH_Chat, GeTSQDaTa, DecodE_HeX,
-    redzed, RejectMSGtaxt, cHSq
+    redzed, RejectMSGtaxt, cHSq, RedZed_SendInv
 )
 
 from Pb2 import MajoRLoGinrEq_pb2, MajoRLoGinrEs_pb2
@@ -488,22 +488,46 @@ class BotWorker:
         return False
 
     async def start_match(self):
-        """Start a match (must be squad leader). Spam FS packet like main.py."""
-        packet = await FS(self.key, self.iv, self.region)
+        """Start a match using multiple methods like main.py."""
         import time
+
+        # Method 1: FS packet (type 9) with bot's UID - spam for 5s
+        fs_packet = await FS(self.key, self.iv, self.region, uid=self.account_uid)
         start_time = time.time()
-        spam_duration = 10
         count = 0
-        while time.time() - start_time < spam_duration:
-            if await self.send_packet(packet):
+        while time.time() - start_time < 5:
+            if await self.send_packet(fs_packet):
                 count += 1
             else:
                 break
             await asyncio.sleep(0.2)
+        logger.info(f"{self.name}: Sent {count} FS(type9) packets")
+
+        # Method 2: Simple start packet (type 214) - the "START button" packet
+        region_header = '0515'
+        if self.region.lower() == 'ind':
+            region_header = '0514'
+        elif self.region.lower() == 'bd':
+            region_header = '0519'
+
+        simple_fields = {1: 214, 2: {1: 1}}
+        simple_proto = await CrEaTe_ProTo(simple_fields)
+        simple_packet = await GeneRaTePk(simple_proto.hex(), region_header, self.key, self.iv)
+
+        start_time = time.time()
+        count2 = 0
+        while time.time() - start_time < 5:
+            if await self.send_packet(simple_packet):
+                count2 += 1
+            else:
+                break
+            await asyncio.sleep(0.2)
+        logger.info(f"{self.name}: Sent {count2} simple start(type214) packets")
+
         self.in_match = True
         self.status = "in_match"
-        logger.info(f"{self.name} started match (sent {count} FS packets)")
-        return count > 0
+        logger.info(f"{self.name} match start complete (FS={count}, start214={count2})")
+        return count > 0 or count2 > 0
 
     async def send_emote(self, target_uid, emote_id):
         """Send emote to a player."""
@@ -519,8 +543,26 @@ class BotWorker:
         return await self.send_packet(inv_packet)
 
     async def accept_squad_invite(self, squad_owner, invite_code):
-        """Accept a squad invite from another player using the correct packet."""
+        """Accept a squad invite using the full 3-step flow from main.py."""
         try:
+            # Step 1: RedZed_SendInv — acknowledge invite with game info
+            ack_packet = await RedZed_SendInv(
+                int(self.account_uid), int(squad_owner),
+                self.key, self.iv, self.region
+            )
+            if ack_packet:
+                await self.send_packet(ack_packet)
+                logger.info(f"{self.name}: Sent RedZed_SendInv ack to {squad_owner}")
+
+            # Step 2: RejectMSGtaxt — response message
+            reject_packet = await RejectMSGtaxt(
+                int(squad_owner), int(self.account_uid),
+                self.key, self.iv, self.region
+            )
+            if reject_packet:
+                await self.send_packet(reject_packet)
+
+            # Step 3: ArohiAccepted (redzed) — actual join
             join_packet = await redzed(int(squad_owner), invite_code, self.key, self.iv, self.region)
             if await self.send_packet(join_packet):
                 self.in_squad = True
@@ -707,6 +749,11 @@ class BotWorker:
                     break
 
                 data_hex = data.hex()
+                pkt_header = data_hex[:4]
+
+                # Log all packet types for debugging
+                if pkt_header not in ('0500', '0514', '0515', '0519'):
+                    logger.info(f"{self.name}: Received packet header={pkt_header}, len={len(data_hex)}")
 
                 # 0500 packets are NOT encrypted - raw protobuf after 5-byte header
                 if data_hex.startswith("0500"):
@@ -718,6 +765,12 @@ class BotWorker:
                             await self._handle_squad_data(pj)
                     except Exception as e:
                         logger.debug(f"{self.name}: 0500 parse: {e}")
+
+                # 0600 = match room data
+                elif data_hex.startswith("0600"):
+                    self.in_match = True
+                    self.status = "in_match"
+                    logger.info(f"{self.name}: Match room received (0600, len={len(data_hex)}), in match!")
 
                 # 0514/0515/0519 packets may be encrypted
                 elif data_hex.startswith(("0514", "0515", "0519")):
