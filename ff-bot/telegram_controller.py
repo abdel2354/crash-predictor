@@ -29,16 +29,24 @@ manager = MultiAccountManager()
 
 # ─── Config ─────────────────────────────────────────────────────────
 
+def _load_config():
+    try:
+        with open("config.json", "r") as f:
+            return json.load(f)
+    except Exception:
+        return {}
+
+_cfg = _load_config()
+
 def get_token():
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-    if not token:
-        try:
-            with open("config.json", "r") as f:
-                cfg = json.load(f)
-            token = cfg.get("telegram_token", "")
-        except Exception:
-            pass
-    return token
+    return os.environ.get("TELEGRAM_BOT_TOKEN", _cfg.get("telegram_token", ""))
+
+OWNER_ID = int(os.environ.get("OWNER_ID", _cfg.get("owner_id", 0)))
+
+def is_owner(update: Update) -> bool:
+    if not OWNER_ID:
+        return True
+    return update.effective_user and update.effective_user.id == OWNER_ID
 
 
 # ─── Keyboards ──────────────────────────────────────────────────────
@@ -69,6 +77,8 @@ def back_keyboard():
 # ─── Handlers ───────────────────────────────────────────────────────
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update):
+        return
     accounts = manager.load_accounts()
     glory = manager.get_glory_stats()
     text = (
@@ -84,6 +94,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not is_owner(update):
+        return
     query = update.callback_query
     await query.answer()
     data = query.data
@@ -292,6 +304,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle text input for various actions."""
+    if not is_owner(update):
+        return
     action = context.user_data.get("action")
     text = update.message.text.strip()
 
